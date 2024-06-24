@@ -1,0 +1,8 @@
+[package]
+name = "test_program"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4.21"
+win_dbg_logger = "0.1"
