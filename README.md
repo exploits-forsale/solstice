@@ -1,69 +1,50 @@
-# Write Windows Shellcode in Rust
+# Solstice
 
+A multi-stage PE loader for [@carrot_c4k3](https://twitter.com/carrot_c4k3)'s CollateralDamage Xbox One exploit.
 
 ## Project overview
 
-Windows shellcode project is located in `shellcode/`, it can build into a PE file with only `.text` section 
-and has no external dependencies.
+There are four main crates:
+
+1. `shellcode_stage1/` is the stage 1 shellcode that is embedded directly in the GameScript exploit. This is intended to be as small as possible so that less typing is required from a rubber ducky/Flipper if that appraoch is used.
+2. `shellcode_stage2/` is read by `shellcode_stage1/` from disk, made executable, and executed. It reads a PE file from disk, specified at `AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState\run.exe`, and manually loads the PE using [rspe](https://github.com/landaire/rspe). This shellcode can be arbitrarily large.
+3. `shellcode_utils/` contains common functionality shared between the shellcode stages including function definitions and helpers to retrieve functions at runtime.
+4. `src/` (`shellcode_gen`) reads the resulting exe files from `shellcode_stage1/` and `shellcode_stage2/`, applies some patches, and generates a flattened .bin file.
+
+`shellcode_stage1/` and `shellcode_stage2/` have a special `.cargo/config.toml` that merges all PE sections into just a single `.text` section, and ensures there are no external dependencies (i.e. no runtime linkage required). They are `#![no_std]`, `#![no_main]` binaries that resolve every platform function at runtime itself.
 
 ![shellcode.exe in pe-bear](./images/show_in_pe_bear.png)
 
-Then we can dump the `.text` section and do some patches to make it position-independent. this idea 
-was from [hasherezade](https://twitter.com/hasherezade)'s project [masm_shc](https://github.com/hasherezade/masm_shc).
+`shellcode_gen/`'s main job is to read the `.text` section and do some patches to make it position-independent. This idea
+was from [hasherezade](https://twitter.com/hasherezade)'s project [masm_shc](https://github.com/hasherezade/masm_shc). It has also been modified to output a new GameScript exploit file with the latest `shellcode_stage1/` automatically embedded in it, placed in `outputs/`.
+
+This repo is a heavily modified version of [`b1nhack/rust-shellcode`](https://github.com/b1nhack/rust-shellcode). Thank you to b1nhack for their work.
+
+Unfortunately this project is _not_ a proper cargo workspace because Cargo does not allow you to specify a different profile per-crate in a workspace. See: https://github.com/rust-lang/cargo/issues/8264
 
 
 ## How to build it
 
-(Only tested on Win10 x64)
+**This project has only been built and tested using `x86_64-pc-windows-msvc` on Windows 11. It will likely build on any 64-bit Windows, but has not been tested across different versions.**
 
+1. Clone this repo and its dependencies:
 
-### Build shellcode binary
+```shell
+git clone https://github.com/landaire/rspe.git
+git clone https://github.com/landaire/solstice.git
+cd solstice
+```
+2. Ensure rust nightly is installed: `rust toolchain install nightly`
+3. Install `just`: https://github.com/casey/just
+4. Run:
 
-
-
-```sh
-rustup default nightly-x86_64-pc-windows-msvc
-cd shellcode/
-cargo build --release
+```
+just build-exploit
 ```
 
-If everthing goes well, we will get `shellcode\target\x86_64-pc-windows-msvc\release\shellcode.exe`
+## Credits
 
-### Dump .text section and do some patches 
-
-We patch at the start of `.text` section, make it jump to entry point. In this way, we can have some strings store in the merged section, or we have to use `u8` and `u16` bytes array on stack to represent string.
-
-```sh
-cd ..
-cargo run
-```
-
-
-We will get  `shellcode\target\x86_64-pc-windows-msvc\release\shellcode.bin`, this is the final shellcode file.
-
-
-### Test shellcode
-
-Test the shellcode use your favorite shellcode loader, i use my own little tool [rs_shellcode](https://github.com/b1tg/rs_shellcode) for demonstration.
-
-```sh
-git clone https://github.com/b1tg/rs_shellcode
-cd rs_shellcode/
-cargo build
-./target/debug/rs_shellcode.exe -f "shellcode\target\x86_64-pc-windows-msvc\release\shellcode.bin" 
-```
-
-This demo shellcode will popup a message box and print some log use `OutputDebugStringA`, you can check it out in [debugview](https://docs.microsoft.com/en-us/sysinternals/downloads/debugview) or windbg.
-
-![run shellcode](./images/run_shellcode.png)
-
-
-
-## References
-
-- https://github.com/mcountryman/min-sized-rust-windows
-- https://github.com/hasherezade/masm_shc
-- https://github.com/Trantect/win_driver_example
-- https://not-matthias.github.io/kernel-driver-with-rust/
-- https://github.com/pravic/winapi-kmd-rs
-- https://github.com/johnthagen/min-sized-rust
+- This repo is a heavily modified version of [`b1nhack/rust-shellcode`](https://github.com/b1nhack/rust-shellcode). Thank you to b1nhack for their work.
+- [Thoxy67 for their original rspe lib](https://github.com/Thoxy67/rspe) which I modified.
+- [monoxgas/sRDI](https://github.com/monoxgas/sRDI/blob/9fdd5c44383039519accd1e6bac4acd5a046a92c/ShellcodeRDI/ShellcodeRDI.c) [polycone/pe-loader](https://github.com/polycone/pe-loader/blob/master/loader/src/loader/) for their PE loaders which served as a reference to double-check I was doing things right
+- [horsicq/XPEViewer](https://github.com/horsicq/XPEViewer) which was useful for viewing data from PEs I was having trouble loading.
