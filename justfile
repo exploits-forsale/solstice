@@ -9,6 +9,11 @@ build-stage2:
 build-test-program:
     cd ./test_proram && cargo build --release
 
+build-exploit:
+    just --justfile {{justfile()}} build-stage1
+    just --justfile {{justfile()}} build-stage2
+    cargo run --release
+
 generate:
     just --justfile {{justfile()}} build-stage1
     just --justfile {{justfile()}} build-stage2
