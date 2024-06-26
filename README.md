@@ -44,6 +44,7 @@ just build-exploit
 
 ## Credits
 
+- [@carrot_c4k3](https://gist.github.com/carrot-c4k3/10fdb4f3d11ca568f5452bbaefdc20dd) for giving me the PRIVILEGE of writing a PE loader for her exploit
 - This repo is a heavily modified version of [`b1nhack/rust-shellcode`](https://github.com/b1nhack/rust-shellcode). Thank you to b1nhack for their work.
 - [Thoxy67 for their original rspe lib](https://github.com/Thoxy67/rspe) which I modified.
 - [monoxgas/sRDI](https://github.com/monoxgas/sRDI/blob/9fdd5c44383039519accd1e6bac4acd5a046a92c/ShellcodeRDI/ShellcodeRDI.c) [polycone/pe-loader](https://github.com/polycone/pe-loader/blob/master/loader/src/loader/) for their PE loaders which served as a reference to double-check I was doing things right
