@@ -16,7 +16,7 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\test_program.exe"#, "\0");
+const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\run.exe"#, "\0");
 
 #[no_mangle]
 pub extern "C" fn main() -> u32 {
