@@ -42,6 +42,16 @@ cd solstice
 just build-exploit
 ```
 
+All necessary outputs will be in the `outputs/` directory.
+
+If you would like to test on the PC version of GameScript, running the following command will build execute `build-exploit`, but will copy the artifacts to the GameScript directory and overwrite its autosave state so all you have to do is click "run code":
+
+```
+just generate
+```
+
+Currently the stage2 shellcode attempts to open and run `run.exe` out of GameScript's `LocalState` directory.
+
 ## Credits
 
 - [@carrot_c4k3](https://gist.github.com/carrot-c4k3/10fdb4f3d11ca568f5452bbaefdc20dd) for giving me the PRIVILEGE of writing a PE loader for her exploit
