@@ -63,10 +63,6 @@ pub extern "C" fn main() -> u32 {
         );
     }
 
-    unsafe {
-        core::arch::asm!("int 3");
-    }
-
     // Open the stage2 payload
     let handle = unsafe {
         CreateFileA(
