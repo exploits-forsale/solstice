@@ -18,5 +18,5 @@ generate:
     just --justfile {{justfile()}} build-stage1
     just --justfile {{justfile()}} build-stage2
     cargo run --release
-    cp shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin C:\Users\lander\AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState
+    cp shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin C:\Users\lander\AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState\stage2.bin
     cp test_program\\target\\release\\test_program.exe C:\Users\lander\AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState

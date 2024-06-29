@@ -1,6 +1,6 @@
 use core::{
     cell::LazyCell,
-    ffi::{c_char, c_void},
+    ffi::{c_char, c_int, c_void},
 };
 
 use crate::{binds::*, get_func_ptr_by_name, resolve_func};
@@ -18,7 +18,6 @@ impl<T, F: FnOnce() -> T> CachedPtr<T, F> {
 
 pub const GetProcAddress_: &str = concat!("GetProcAddress", "\0");
 pub const MessageBoxA_: &str = concat!("MessageBoxA", "\0");
-pub const wsprintfa_: &str = concat!("wsprintfA", "\0");
 pub const GlobalAlloc_: &str = concat!("GlobalAlloc", "\0");
 
 pub type LoadLibraryAFn = unsafe extern "system" fn(lpFileName: *const u8) -> PVOID;
@@ -44,7 +43,7 @@ pub type ReadFileFn = unsafe extern "system" fn(
     nNumberOfBytesToRead: u32,
     lpNumberOfBytesRead: *mut u32,
     lpOverlapped: PVOID,
-);
+) -> c_int;
 pub type GlobalAllocFn = unsafe extern "system" fn(flags: u32, byte_count: usize) -> PVOID;
 pub type GlobalFreeFn = unsafe extern "system" fn(addr: PVOID);
 pub type VirtualAllocFn = unsafe extern "system" fn(
@@ -78,6 +77,9 @@ pub type RtlAddFunctionTableFn = unsafe extern "system" fn(
     BaseAddress: u64,
 ) -> u32;
 
+pub type ExpandEnvironmentStringsAFn =
+    unsafe extern "system" fn(lpSrc: *const u8, lpDst: *mut u8, size: u32) -> u32;
+
 // pub fn get_kernel32_test() -> PVOID {
 //     static KERNEL32: CachedPtr<PVOID> = CachedPtr::new(|| {
 //         let KERNEL32_STR: [u16; 13] = [75, 69, 82, 78, 69, 76, 51, 50, 46, 68, 76, 76, 0];
@@ -100,6 +102,14 @@ pub fn get_user32(kernel32_ptr: PVOID) -> PVOID {
     }
 
     u32_ptr
+}
+
+pub fn fetch_wsprintf(user32_ptr: PVOID) -> wsprintfaFn {
+    resolve_func!(user32_ptr, "wsprintfA")
+}
+
+pub fn fetch_expand_environment_strings(kernel32_ptr: PVOID) -> ExpandEnvironmentStringsAFn {
+    resolve_func!(kernel32_ptr, "ExpandEnvironmentStringsA")
 }
 
 pub fn fetch_rtl_add_fn_table(kernel32_ptr: PVOID) -> RtlAddFunctionTableFn {
