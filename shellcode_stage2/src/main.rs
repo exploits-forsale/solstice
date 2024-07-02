@@ -117,7 +117,7 @@ pub extern "C" fn main() -> u32 {
     // unsafe { asm!("int 3") };
 
     unsafe {
-        rspe::reflective_loader(
+        solstice_loader::reflective_loader(
             pe_data,
             VirtualAlloc,
             VirtualProtect,

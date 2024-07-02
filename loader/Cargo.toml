@@ -1,0 +1,18 @@
+[package]
+name = "solstice_loader"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["exploits.forsale"]
+description = "Reflective PE loader library"
+readme = "README.md"
+repository = "https://github.com/exploits-forsale/solstice"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.compiler_builtins]
+git = "https://github.com/rust-lang/compiler-builtins"
+default-features = false
+features = ["mem"]
+
+[features]
+shellcode_compat = []

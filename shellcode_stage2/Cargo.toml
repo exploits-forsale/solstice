@@ -32,6 +32,6 @@ default-features = false
 version = "0.2"
 default-features = false
 
-[dependencies.rspe]
-path = "../../rspe"
+[dependencies.solstice_loader]
+path = "../loader"
 features = ["shellcode_compat"]

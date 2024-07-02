@@ -30,7 +30,6 @@ Unfortunately this project is _not_ a proper cargo workspace because Cargo does 
 1. Clone this repo and its dependencies:
 
 ```shell
-git clone https://github.com/landaire/rspe.git
 git clone https://github.com/landaire/solstice.git
 cd solstice
 ```
@@ -54,8 +53,8 @@ Currently the stage2 shellcode attempts to open and run `run.exe` out of GameScr
 
 ## Credits
 
-- [@carrot_c4k3](https://gist.github.com/carrot-c4k3/10fdb4f3d11ca568f5452bbaefdc20dd) for giving me the PRIVILEGE of writing a PE loader for her exploit
+- [@carrot_c4k3](https://gist.github.com/carrot-c4k3/10fdb4f3d11ca568f5452bbaefdc20dd) for the GameScript and ntkernel exploits.
 - This repo is a heavily modified version of [`b1nhack/rust-shellcode`](https://github.com/b1nhack/rust-shellcode). Thank you to b1nhack for their work.
-- [Thoxy67 for their original rspe lib](https://github.com/Thoxy67/rspe) which I modified.
+- [Thoxy67 for their original rspe lib](https://github.com/Thoxy67/rspe) which was modified.
 - [monoxgas/sRDI](https://github.com/monoxgas/sRDI/blob/9fdd5c44383039519accd1e6bac4acd5a046a92c/ShellcodeRDI/ShellcodeRDI.c) [polycone/pe-loader](https://github.com/polycone/pe-loader/blob/master/loader/src/loader/) for their PE loaders which served as a reference to double-check I was doing things right
 - [horsicq/XPEViewer](https://github.com/horsicq/XPEViewer) which was useful for viewing data from PEs I was having trouble loading.
