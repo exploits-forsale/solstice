@@ -75,21 +75,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "rspe"
-version = "0.1.2"
-dependencies = [
- "compiler_builtins",
-]
-
-[[package]]
 name = "shellcode_stage2"
 version = "0.1.0"
 dependencies = [
  "compiler_builtins",
  "num",
  "num-traits",
- "rspe",
  "shellcode_utils",
+ "solstice_loader",
 ]
 
 [[package]]
@@ -98,4 +91,11 @@ version = "0.1.0"
 dependencies = [
  "num",
  "num-traits",
+]
+
+[[package]]
+name = "solstice_loader"
+version = "0.1.0"
+dependencies = [
+ "compiler_builtins",
 ]

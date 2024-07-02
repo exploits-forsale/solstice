@@ -9,27 +9,30 @@ use std::path::Path;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    let output_path = Path::new(args[1].as_str());
+
     let stage1_path =
-        "shellcode_stage1\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage1.exe";
+        "..\\shellcode_stage1\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage1.exe";
 
     let stage1_output = rewrite_shellcode(stage1_path)?;
 
     let stage2_path =
-        "shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.exe";
+        "..\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.exe";
     let stage2_output = rewrite_shellcode(stage2_path)?;
 
     // generate the exploit code to load the stage1 code
     let gamescript_exploit = generate_gamescript_exploit(&stage1_output)?;
 
-    if !std::path::Path::new("outputs").exists() {
-        std::fs::create_dir("outputs")?;
+    if !output_path.exists() {
+        std::fs::create_dir(output_path)?;
     }
 
-    let gs_path = "outputs/gamescript_poc.txt";
+    let gs_path = output_path.join("gamescript_poc.txt");
     std::fs::write(gs_path, gamescript_exploit.as_bytes())?;
 
-    std::fs::copy(stage1_output, "outputs/stage1.bin")?;
-    std::fs::copy(stage2_output, "outputs/stage2.bin")?;
+    std::fs::copy(stage1_output, output_path.join("stage1.bin"))?;
+    std::fs::copy(stage2_output, output_path.join("stage2.bin"))?;
 
     println!("done! artifacts can be found in outputs/");
 
