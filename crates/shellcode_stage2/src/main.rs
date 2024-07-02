@@ -80,9 +80,7 @@ pub extern "C" fn main() -> u32 {
 
     if handle as usize == usize::MAX {
         debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
-        unsafe {
-            core::arch::asm!("int 3");
-        }
+        debug_break!();
     }
 
     let stage2_size = unsafe { GetFileSize(handle, core::ptr::null_mut()) };
@@ -107,7 +105,7 @@ pub extern "C" fn main() -> u32 {
             ) == 0
             {
                 debug_print!("Reading stage3 failed");
-                core::arch::asm!("int 3");
+                debug_break!();
             }
             write_ptr = write_ptr.offset(bytes_read as _);
         }

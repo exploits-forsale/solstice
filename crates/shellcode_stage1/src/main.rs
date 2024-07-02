@@ -29,9 +29,6 @@ pub static _fltused: i32 = 0;
 #[no_mangle]
 pub extern "C" fn main() -> u32 {
     // unsafe {
-    //     asm!("int 3");
-    // }
-    // unsafe {
     //     // clean argc and argv
     //     asm!("mov rcx, 0", "mov rdx, 0",);
     // }
@@ -81,9 +78,7 @@ pub extern "C" fn main() -> u32 {
 
     if handle as usize == usize::MAX {
         debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
-        unsafe {
-            core::arch::asm!("int 3");
-        }
+        debug_break!();
     }
 
     let stage2_size = unsafe { GetFileSize(handle, core::ptr::null_mut()) };
@@ -108,7 +103,7 @@ pub extern "C" fn main() -> u32 {
             ) == 0
             {
                 debug_print!("Reading stage2 failed");
-                core::arch::asm!("int 3");
+                debug_break!();
             }
             write_ptr = write_ptr.offset(bytes_read as _);
         }

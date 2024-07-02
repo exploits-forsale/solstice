@@ -19,6 +19,15 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use core::ptr::null_mut;
 
+#[macro_export]
+macro_rules! debug_break {
+    () => {
+        unsafe {
+            core::arch::asm!("int 3");
+        }
+    };
+}
+
 pub fn get_module_by_name(module_name: *const u16) -> PVOID {
     let peb: *mut PEB;
     unsafe {
