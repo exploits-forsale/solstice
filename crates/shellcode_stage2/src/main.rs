@@ -35,7 +35,10 @@ pub extern "C" fn main() -> u32 {
     let OutputDebugStringA = fetch_output_debug_string(kernel32_ptr);
     macro_rules! debug_print {
         ($msg:expr) => {
-            unsafe { OutputDebugStringA(concat!($msg, "\n\0").as_ptr() as _) }
+            #[cfg(feature = "debug")]
+            unsafe {
+                OutputDebugStringA(concat!($msg, "\n\0").as_ptr() as _)
+            }
         };
     }
 

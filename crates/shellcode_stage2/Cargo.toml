@@ -35,3 +35,7 @@ default-features = false
 [dependencies.solstice_loader]
 path = "../loader"
 features = ["shellcode_compat"]
+
+[features]
+default = []
+debug = []
