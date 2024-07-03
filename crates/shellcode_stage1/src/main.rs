@@ -41,14 +41,14 @@ pub extern "C" fn main() -> u64 {
     if kernelbase_ptr.is_none() {
         return 0x404;
     }
-    let kernel32_ptr = kernelbase_ptr.unwrap();
+    let kernelbase_ptr = kernelbase_ptr.unwrap();
 
-    let ReadFile = fetch_read_file(kernel32_ptr);
-    let CreateFileA = fetch_create_file(kernel32_ptr);
-    let VirtualAlloc = fetch_virtual_alloc(kernel32_ptr);
-    let VirtualProtect = fetch_virtual_protect(kernel32_ptr);
-    let GetFileSize = fetch_get_file_size(kernel32_ptr);
-    let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernel32_ptr);
+    let ReadFile = fetch_read_file(kernelbase_ptr);
+    let CreateFileA = fetch_create_file(kernelbase_ptr);
+    let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
+    let VirtualProtect = fetch_virtual_protect(kernelbase_ptr);
+    let GetFileSize = fetch_get_file_size(kernelbase_ptr);
+    let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 
     #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernel32_ptr);
