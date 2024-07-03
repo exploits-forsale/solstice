@@ -435,9 +435,11 @@ fn write_import_table_impl(
 
                 // If the function name is not empty, replace the function address with the address of the function in the DLL
                 if !funcname.len() > 1 {
-                    Some(unsafe {
+                    let val = unsafe {
                         (get_proc_address_fn)(dllhandle, funcname.as_bytes().as_ptr() as *const u8)
-                    })
+                    };
+
+                    Some(val)
                 } else {
                     None
                 }

@@ -198,19 +198,19 @@ unsafe fn reflective_loader_impl(
     }
 
     // Set exception handler
-    #[cfg(target_arch = "x86_64")]
-    {
-        let exception_dir =
-            &ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    // #[cfg(target_arch = "x86_64")]
+    // {
+    //     let exception_dir =
+    //         &ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
 
-        if exception_dir.Size != 0 {
-            (rtl_add_function_table_fn)(
-                baseptr.offset(exception_dir.VirtualAddress as isize),
-                ((exception_dir.Size as usize) / core::mem::size_of::<RUNTIME_FUNCTION>()) as u32,
-                baseptr as u64,
-            );
-        }
-    }
+    //     if exception_dir.Size != 0 {
+    //         (rtl_add_function_table_fn)(
+    //             baseptr.offset(exception_dir.VirtualAddress as isize),
+    //             ((exception_dir.Size as usize) / core::mem::size_of::<RUNTIME_FUNCTION>()) as u32,
+    //             baseptr as u64,
+    //         );
+    //     }
+    // }
 
     // Create a new thread to execute the image
     execute_image(entrypoint, create_thread_fn);
