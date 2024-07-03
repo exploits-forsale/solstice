@@ -8,5 +8,5 @@ log = { version = "0.4.21", optional = true }
 win_dbg_logger = { version = "0.1", optional = true }
 
 [features]
-default = ["dep:log", "dep:win_dbg_logger"]
-debug = []
+default = []
+debug = ["dep:log", "dep:win_dbg_logger"]
