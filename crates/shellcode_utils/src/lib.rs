@@ -18,6 +18,7 @@ use crate::binds::*;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::ptr::null_mut;
+use paste::paste;
 
 #[macro_export]
 macro_rules! debug_break {
@@ -28,7 +29,7 @@ macro_rules! debug_break {
     };
 }
 
-pub fn get_module_by_name(module_name: *const u16) -> PVOID {
+pub fn get_module_by_name(module_name: *const u16) -> Option<PVOID> {
     let peb: *mut PEB;
     unsafe {
         asm!(
@@ -36,20 +37,30 @@ pub fn get_module_by_name(module_name: *const u16) -> PVOID {
             out(reg) peb,
         );
         let ldr = (*peb).Ldr;
-        let list_entry = &((*ldr).InLoadOrderModuleList);
-        let mut cur_module: *const LDR_DATA_TABLE_ENTRY = &list_entry as *const _ as *const _;
+        let module_list = &((*ldr).InLoadOrderModuleList);
+
+        // The first entry of LDR_DATA_TABLE_ENTRY is a LIST_ENTRY, so transmuting this address
+        // from LIST_ENTRY to LDR_DATA_TABLE_ENTRY is legal.
+        let mut cur_module: *const LDR_DATA_TABLE_ENTRY = core::mem::transmute(module_list);
+
+        // The list is doubly-linked, so eventually we will wrap back around to the head.
+        let module_list_head = cur_module;
+
         loop {
-            if cur_module.is_null() || (*cur_module).BaseAddress.is_null() {
-                // TODO: when to break
-            }
             let cur_name = (*cur_module).BaseDllName.Buffer;
             if !cur_name.is_null() {
-                if compare_raw_str(module_name, cur_name) {
-                    return (*cur_module).BaseAddress;
+                if icmp_raw_str_u16(module_name, cur_name) {
+                    return Some((*cur_module).BaseAddress);
                 }
             }
+
             let flink = (*cur_module).InLoadOrderModuleList.Flink;
             cur_module = flink as *const LDR_DATA_TABLE_ENTRY;
+
+            if cur_module == module_list_head {
+                // We wrapped the whole list and didn't find a result.
+                return None;
+            }
         }
     }
 }
@@ -149,6 +160,37 @@ pub fn str_to_u16_ptr(s: &str, buf: &mut [u16]) {
 
 use num_traits::Num;
 
+macro_rules! gen_icmp_raw_str {
+    ($ty:ty) => {
+        paste! {
+            /// Case-insensitive comparison of two raw strings
+            pub fn [<icmp_raw_str_ $ty>] (s: *const $ty, u: *const $ty) -> bool {
+                unsafe {
+                    let u_len = (0..).take_while(|&i| *u.offset(i) != 0).count();
+                    let u_slice = core::slice::from_raw_parts(u, u_len);
+
+                    let s_len = (0..).take_while(|&i| *s.offset(i) != 0).count();
+                    let s_slice = core::slice::from_raw_parts(s, s_len);
+
+                    if s_len != u_len {
+                        return false;
+                    }
+
+                    for i in 0..s_len {
+                        if (s_slice[i] & !0x20) != (u_slice[i] & !0x20) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+    };
+}
+
+gen_icmp_raw_str!(u8);
+gen_icmp_raw_str!(u16);
+
 pub fn compare_raw_str<T>(s: *const T, u: *const T) -> bool
 where
     T: Num,
@@ -163,6 +205,7 @@ where
         if s_len != u_len {
             return false;
         }
+
         for i in 0..s_len {
             if s_slice[i] != u_slice[i] {
                 return false;

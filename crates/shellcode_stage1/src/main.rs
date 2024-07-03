@@ -16,9 +16,11 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-type Stage2Fn = fn() -> u32;
+type Stage2Fn = fn() -> u64;
 
-pub const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\stage2.bin"#, "\0");
+const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\stage2.bin"#, "\0");
+const STAGE1_ERROR_FILE_OPEN_FAILED: u64 = 0x100000000_00000001;
+const STAGE1_ERROR_FILE_READ_FAILED: u64 = 0x100000000_00000002;
 
 #[used]
 #[no_mangle]
@@ -27,14 +29,19 @@ pub const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\st
 pub static _fltused: i32 = 0;
 
 #[no_mangle]
-pub extern "C" fn main() -> u32 {
+pub extern "C" fn main() -> u64 {
     // unsafe {
     //     // clean argc and argv
     //     asm!("mov rcx, 0", "mov rdx, 0",);
     // }
-    let kernel32_ptr = get_kernel32();
 
     unsafe { asm!("and rsp, ~0xf") };
+
+    let kernelbase_ptr = get_kernelbase();
+    if kernelbase_ptr.is_none() {
+        return 0x404;
+    }
+    let kernel32_ptr = kernelbase_ptr.unwrap();
 
     let ReadFile = fetch_read_file(kernel32_ptr);
     let CreateFileA = fetch_create_file(kernel32_ptr);
@@ -43,7 +50,9 @@ pub extern "C" fn main() -> u32 {
     let GetFileSize = fetch_get_file_size(kernel32_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernel32_ptr);
 
+    #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernel32_ptr);
+
     macro_rules! debug_print {
         ($msg:expr) => {
             #[cfg(feature = "debug")]
@@ -77,8 +86,14 @@ pub extern "C" fn main() -> u32 {
     };
 
     if handle as usize == usize::MAX {
+        #[cfg(not(feature = "debug"))]
+        return STAGE1_ERROR_FILE_OPEN_FAILED;
+
         debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
-        debug_break!();
+        #[cfg(feature = "debug")]
+        {
+            debug_break!();
+        }
     }
 
     let stage2_size = unsafe { GetFileSize(handle, core::ptr::null_mut()) };
@@ -102,8 +117,14 @@ pub extern "C" fn main() -> u32 {
                 core::ptr::null_mut(),
             ) == 0
             {
+                #[cfg(not(feature = "debug"))]
+                return STAGE1_ERROR_FILE_READ_FAILED;
+
                 debug_print!("Reading stage2 failed");
-                debug_break!();
+                #[cfg(feature = "debug")]
+                {
+                    debug_break!();
+                }
             }
             write_ptr = write_ptr.offset(bytes_read as _);
         }

