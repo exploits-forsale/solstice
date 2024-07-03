@@ -28,7 +28,7 @@ fn main() -> Result<()> {
         std::fs::create_dir(output_path)?;
     }
 
-    let gs_path = output_path.join("gamescript_poc.txt");
+    let gs_path = output_path.join("gamescript_autosave.txt");
     std::fs::write(gs_path, gamescript_exploit.as_bytes())?;
 
     std::fs::copy(stage1_output, output_path.join("stage1.bin"))?;
