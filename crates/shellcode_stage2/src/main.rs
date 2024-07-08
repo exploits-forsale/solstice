@@ -33,6 +33,7 @@ pub extern "C" fn main() -> u64 {
     // }
 
     let kernelbase_ptr = get_kernelbase().unwrap();
+    let kernel32_ptr = get_kernel32(kernelbase_ptr);
 
     #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
@@ -55,8 +56,8 @@ pub extern "C" fn main() -> u64 {
     let GetProcAddress = fetch_get_proc_address(kernelbase_ptr);
     let LoadLibraryA = fetch_load_library(kernelbase_ptr);
     let CreateThread = fetch_create_thread(kernelbase_ptr);
-    // TODO: this is kernel32, not kernelbase, so it will be NULL.
-    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernelbase_ptr);
+    let RtlAddFunctionTable = kernel32_ptr.map(fetch_rtl_add_fn_table);
+
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 

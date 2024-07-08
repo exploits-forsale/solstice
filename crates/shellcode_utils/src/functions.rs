@@ -97,6 +97,24 @@ pub fn get_kernelbase() -> Option<PVOID> {
     crate::get_module_by_name(KERNEL32_STR.as_ptr())
 }
 
+pub fn get_kernel32(kernelbase_ptr: PVOID) -> Option<PVOID> {
+    let KERNEL32_STR: [u16; 13] = [
+        'K' as u16, 'E' as u16, 'R' as u16, 'N' as u16, 'E' as u16, 'L' as u16, '3' as u16,
+        '2' as u16, '.' as u16, 'D' as u16, 'L' as u16, 'L' as u16, 0,
+    ];
+
+    crate::get_module_by_name(KERNEL32_STR.as_ptr()).or_else(|| {
+        let kernel32 = concat!("kernel32.dll", "\0");
+        let kernel32_ptr =
+            unsafe { (fetch_load_library(kernelbase_ptr))(kernel32.as_ptr() as *const _) };
+        if kernel32_ptr.is_null() {
+            None
+        } else {
+            Some(kernel32_ptr)
+        }
+    })
+}
+
 pub fn get_user32(kernelbase_ptr: PVOID) -> PVOID {
     let user32 = concat!("user32.dll", "\0");
     let mut u32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(user32.as_ptr() as *const _) };
