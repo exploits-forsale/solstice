@@ -70,7 +70,7 @@ pub extern "C" fn main() -> u64 {
         );
     }
 
-    // Open the stage2 payload
+    // Open the stage3 payload
     let handle = unsafe {
         CreateFileA(
             stage3_filename.as_ptr() as *const i8,
