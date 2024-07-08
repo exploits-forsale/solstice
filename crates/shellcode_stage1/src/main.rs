@@ -30,11 +30,6 @@ pub static _fltused: i32 = 0;
 
 #[no_mangle]
 pub extern "C" fn main() -> u64 {
-    // unsafe {
-    //     // clean argc and argv
-    //     asm!("mov rcx, 0", "mov rdx, 0",);
-    // }
-
     unsafe { asm!("and rsp, ~0xf") };
 
     let kernelbase_ptr = get_kernelbase();
@@ -51,7 +46,7 @@ pub extern "C" fn main() -> u64 {
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 
     #[cfg(feature = "debug")]
-    let OutputDebugStringA = fetch_output_debug_string(kernel32_ptr);
+    let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
 
     macro_rules! debug_print {
         ($msg:expr) => {

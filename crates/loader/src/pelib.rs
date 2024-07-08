@@ -1,9 +1,20 @@
 use core::ffi::c_void;
 
+use windows_sys::Win32::{
+    self,
+    Foundation::UNICODE_STRING,
+    System::{
+        Diagnostics::Debug::{
+            IMAGE_DATA_DIRECTORY, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER,
+        },
+        SystemServices::{IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_IMPORT_DESCRIPTOR},
+    },
+};
+
 use crate::windows::{
-    GetModuleHandleAFn, GetProcAddressFn, LoadLibraryAFn, IMAGE_BASE_RELOCATION,
-    IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DOS_HEADER,
-    IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_SIGNATURE, IMAGE_ORDINAL_FLAG, IMAGE_SECTION_HEADER,
+    GetModuleHandleAFn, GetProcAddressFn, LoadLibraryAFn, VirtualAllocFn, VirtualProtectFn,
+    IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_NT_SIGNATURE,
+    IMAGE_ORDINAL_FLAG,
 };
 
 /// Function to get the size of the headers
@@ -127,13 +138,11 @@ pub fn get_nt_header(
     // Calculate the address of the NT header
     #[cfg(target_arch = "x86_64")]
     let lp_nt_header = unsafe {
-        (lp_image as usize + (*lp_dos_header).e_lfanew as usize)
-            as *const crate::windows::IMAGE_NT_HEADERS64
+        (lp_image as usize + (*lp_dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS64
     };
     #[cfg(target_arch = "x86")]
     let lp_nt_header = unsafe {
-        (lp_image as usize + (*lp_dos_header).e_lfanew as usize)
-            as *const crate::windows::IMAGE_NT_HEADERS32
+        (lp_image as usize + (*lp_dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS32
     };
     // Check if the NT header signature is valid
     if unsafe { (*lp_nt_header).Signature } != IMAGE_NT_SIGNATURE {
@@ -150,11 +159,11 @@ pub fn get_nt_header(
 fn get_nt_header_size() -> usize {
     #[cfg(target_arch = "x86")]
     {
-        core::mem::size_of::<crate::windows::IMAGE_NT_HEADERS32>()
+        core::mem::size_of::<IMAGE_NT_HEADERS32>()
     }
     #[cfg(target_arch = "x86_64")]
     {
-        core::mem::size_of::<crate::windows::IMAGE_NT_HEADERS64>()
+        core::mem::size_of::<IMAGE_NT_HEADERS64>()
     }
 }
 
@@ -170,13 +179,13 @@ fn get_nt_header_size() -> usize {
 fn get_number_of_sections(ntheader: *const c_void) -> u16 {
     #[cfg(target_arch = "x86_64")]
     return unsafe {
-        (*(ntheader as *const crate::windows::IMAGE_NT_HEADERS64))
+        (*(ntheader as *const IMAGE_NT_HEADERS64))
             .FileHeader
             .NumberOfSections
     };
     #[cfg(target_arch = "x86")]
     return unsafe {
-        (*(ntheader as *const crate::windows::IMAGE_NT_HEADERS32))
+        (*(ntheader as *const IMAGE_NT_HEADERS32))
             .FileHeader
             .NumberOfSections
     };
@@ -248,11 +257,9 @@ pub fn fix_base_relocations(
 ) {
     // Get the NT header
     #[cfg(target_arch = "x86_64")]
-    let nt_header =
-        unsafe { &(*(ntheader as *const crate::windows::IMAGE_NT_HEADERS64)).OptionalHeader };
+    let nt_header = unsafe { &(*(ntheader as *const IMAGE_NT_HEADERS64)).OptionalHeader };
     #[cfg(target_arch = "x86")]
-    let nt_header =
-        unsafe { &(*(ntheader as *const crate::windows::IMAGE_NT_HEADERS32)).OptionalHeader };
+    let nt_header = unsafe { &(*(ntheader as *const IMAGE_NT_HEADERS32)).OptionalHeader };
 
     // Get the base relocation directory
     let basereloc = &nt_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC as usize];
@@ -322,10 +329,10 @@ pub fn fix_base_relocations(
 /// # Returns
 ///
 /// The import directory of the PE file.
-fn get_import_directory(ntheader: *const c_void) -> crate::windows::IMAGE_DATA_DIRECTORY {
+fn get_import_directory(ntheader: *const c_void) -> IMAGE_DATA_DIRECTORY {
     #[cfg(target_arch = "x86_64")]
     return unsafe {
-        (*(ntheader as *const crate::windows::IMAGE_NT_HEADERS64))
+        (*(ntheader as *const IMAGE_NT_HEADERS64))
             .OptionalHeader
             .DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT as usize]
     };
@@ -482,4 +489,98 @@ pub fn write_import_table(
         load_library_fn,
         get_module_handle_fn,
     )
+}
+
+/// Patches the PEB to reflect the new image command line arguments
+pub unsafe fn patch_peb(args: Option<&[u16]>) {
+    let peb = (*teb()).ProcessEnvironmentBlock;
+
+    if let Some(args) = args {
+        let len = args.len() * core::mem::size_of::<u16>();
+        (*(*peb).ProcessParameters).CommandLine.Buffer = (args.as_ptr() as *mut _);
+        (*(*peb).ProcessParameters).CommandLine.Length = len as u16;
+        (*(*peb).ProcessParameters).CommandLine.MaximumLength = len as u16;
+    }
+}
+
+pub fn get_module_section(module: *mut u8, name: &[u8]) -> Option<&'static mut [u8]> {
+    if name.len() > 8 {
+        return None;
+    }
+
+    let dosheader = get_dos_header(module as *const c_void);
+    let ntheader = get_nt_header(module as *const _, dosheader);
+
+    #[cfg(target_arch = "x86_64")]
+    let ntheader_ref: &IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
+    #[cfg(target_arch = "x86")]
+    let ntheader_ref: &IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
+
+    let number_of_sections = get_number_of_sections(ntheader);
+    let nt_header_size = get_nt_header_size();
+
+    let e_lfanew = (unsafe { *dosheader }).e_lfanew as usize;
+    let mut st_section_header =
+        (module as usize + e_lfanew + nt_header_size) as *const IMAGE_SECTION_HEADER;
+
+    for _i in 0..number_of_sections {
+        let header_ref: &IMAGE_SECTION_HEADER = unsafe { core::mem::transmute(st_section_header) };
+        if &header_ref.Name[..name.len()] == name {
+            unsafe {
+                return Some(core::slice::from_raw_parts_mut(
+                    module.offset(header_ref.VirtualAddress as isize),
+                    header_ref.Misc.VirtualSize as usize,
+                ));
+            }
+        }
+
+        st_section_header = unsafe { st_section_header.add(1) };
+    }
+
+    None
+}
+
+/// Patches kernelbase to reflect some of the new image's data
+pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
+    if let Some(args) = args {
+        let peb = (*teb()).ProcessEnvironmentBlock;
+        // This buffer pointer should match the cached UNICODE_STRING in kernelbase
+        let buffer = (*(*peb).ProcessParameters).CommandLine.Buffer;
+
+        // Search this pointer in kernel32's .data section
+        if let Some(kernelbase_data) = get_module_section(kernelbase_ptr, b".data") {
+            let ptr = kernelbase_data.as_mut_ptr();
+            let len = kernelbase_data.len() / 2;
+            // Do not have two mutable references to the same memory range
+
+            let data_as_wordsize = core::slice::from_raw_parts(ptr as *const usize, len);
+            if let Some(found) = data_as_wordsize
+                .iter()
+                .position(|ptr| *ptr == buffer as usize)
+            {
+                // We originally found this while scanning usize-sized data, so we have to translate
+                // this to a byte index
+                let found_buffer_byte_pos = found * core::mem::size_of::<usize>();
+                // Get the start of the unicode string
+                let unicode_str_start =
+                    found_buffer_byte_pos - core::mem::offset_of!(UNICODE_STRING, Buffer);
+                let unicode_str = core::mem::transmute::<_, &mut UNICODE_STRING>(
+                    ptr.offset(unicode_str_start as isize),
+                );
+
+                let args_byte_len = (args.len() * core::mem::size_of::<u16>()) + 1;
+                unicode_str.Buffer = args.as_ptr() as *mut _;
+                unicode_str.Length = args_byte_len as u16;
+                unicode_str.MaximumLength = args_byte_len as u16;
+            }
+        }
+    }
+}
+
+/// Returns the Thread Environment Block (TEB)
+pub fn teb() -> *mut Win32::System::Threading::TEB {
+    let mut teb: *mut Win32::System::Threading::TEB;
+    unsafe { core::arch::asm!("mov {}, gs:[0x30]", out(reg) teb) }
+
+    teb
 }

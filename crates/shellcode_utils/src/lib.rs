@@ -11,6 +11,7 @@
 pub mod alloc;
 pub mod binds;
 pub mod consts;
+pub mod file;
 pub mod functions;
 pub mod prelude;
 

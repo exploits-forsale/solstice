@@ -1,10 +1,22 @@
-use core::alloc::{AllocError, Allocator};
+use core::alloc::{AllocError, Allocator, GlobalAlloc};
 use core::ptr;
 
 use crate::{
     functions::{fetch_global_alloc, fetch_global_free, GlobalAllocFn, GlobalFreeFn},
     PVOID,
 };
+
+pub struct DummyGlobalAlloc {}
+
+unsafe impl GlobalAlloc for DummyGlobalAlloc {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        panic!("this should never be used");
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        panic!("this should never be used");
+    }
+}
 
 pub struct WinGlobalAlloc {
     global_alloc_fn: GlobalAllocFn,

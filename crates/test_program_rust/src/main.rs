@@ -11,6 +11,11 @@ fn main() {
             "Hello from a full exe! My main function is located at 0x{:#x}",
             main as usize
         );
+
+        debug!("My arguments are:");
+        for arg in std::env::args() {
+            debug!("{} {:p}", arg, arg.as_ptr());
+        }
     }
 
     #[cfg(not(feature = "debug"))]

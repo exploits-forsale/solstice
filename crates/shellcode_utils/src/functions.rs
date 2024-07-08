@@ -3,6 +3,8 @@ use core::{
     ffi::{c_char, c_int, c_void},
 };
 
+use windows_sys::Win32;
+
 use crate::{binds::*, get_func_ptr_by_name, resolve_func};
 
 #[repr(transparent)]
@@ -77,8 +79,17 @@ pub type RtlAddFunctionTableFn = unsafe extern "system" fn(
     BaseAddress: u64,
 ) -> u32;
 
+pub type CloseHandleFn = unsafe extern "system" fn(hObject: PVOID);
+
 pub type ExpandEnvironmentStringsAFn =
     unsafe extern "system" fn(lpSrc: *const u8, lpDst: *mut u8, size: u32) -> u32;
+
+pub type GetFullPathNameAFn = unsafe extern "system" fn(
+    lpFileName: *const u8,
+    nBufferLength: u32,
+    lpBuffer: *mut u8,
+    lpFilePart: *mut *const u8,
+) -> u32;
 
 // pub fn get_kernel32_test() -> PVOID {
 //     static KERNEL32: CachedPtr<PVOID> = CachedPtr::new(|| {
@@ -124,6 +135,10 @@ pub fn get_user32(kernelbase_ptr: PVOID) -> PVOID {
     }
 
     u32_ptr
+}
+
+pub fn fetch_get_full_path_name(kernelbase_ptr: PVOID) -> GetFullPathNameAFn {
+    resolve_func!(kernelbase_ptr, "GetFullPathNameA")
 }
 
 pub fn fetch_wsprintf(user32_ptr: PVOID) -> wsprintfaFn {
@@ -182,6 +197,14 @@ pub fn fetch_virtual_alloc(kernelbase_ptr: PVOID) -> VirtualAllocFn {
     resolve_func!(kernelbase_ptr, "VirtualAlloc")
 }
 
+pub fn fetch_virtual_free(kernelbase_ptr: PVOID) -> VirtualFreeFn {
+    resolve_func!(kernelbase_ptr, "VirtualFree")
+}
+
 pub fn fetch_virtual_protect(kernelbase_ptr: PVOID) -> VirtualProtectFn {
     resolve_func!(kernelbase_ptr, "VirtualProtect")
+}
+
+pub fn fetch_close_handle(kernelbase_ptr: PVOID) -> CloseHandleFn {
+    resolve_func!(kernelbase_ptr, "CloseHandle")
 }
