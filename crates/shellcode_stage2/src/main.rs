@@ -85,6 +85,31 @@ pub extern "C" fn main() -> u64 {
         );
     }
 
+    // Get the full image name without the ..\ and all other
+    // unnecessary path characters.
+    let image_name = unsafe {
+        // Get the size of the buffer needed
+        let image_name_length = (GetFullPathNameA)(
+            stage3_filename.as_ptr() as *const _,
+            0,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        );
+
+        // Allocate some memory for the image
+        let image_full_name = heap_alloc!(image_name_length as usize) as *mut u8;
+
+        // Get the full path name
+        let image_full_name_len = (GetFullPathNameA)(
+            stage3_filename.as_ptr() as *const _,
+            image_name_length,
+            image_full_name,
+            core::ptr::null_mut(),
+        ) as usize;
+
+        core::slice::from_raw_parts(image_full_name, image_full_name_len)
+    };
+
     let file_funcs = FileReaderFuncs {
         create_file: fetch_create_file(kernelbase_ptr),
         read_file: fetch_read_file(kernelbase_ptr),
@@ -101,6 +126,7 @@ pub extern "C" fn main() -> u64 {
     }
     let mut stage3_reader = unsafe { stage3_reader.unwrap_unchecked() };
 
+    // Read the full stage3 PE file to memory
     let pe_data = match stage3_reader.read_all() {
         Ok((stage3_data, stage3_size)) => unsafe {
             core::slice::from_raw_parts(stage3_data as *const u8, stage3_size as usize)
@@ -116,6 +142,7 @@ pub extern "C" fn main() -> u64 {
 
     drop(stage3_reader);
 
+    // Try loading stage 3's arguments. Fails gracefully if the file does not exist.
     let mut stage3_args_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
     unsafe {
         (ExpandEnvironmentStringsA)(
@@ -125,7 +152,6 @@ pub extern "C" fn main() -> u64 {
         );
     }
 
-    // Try loading stage 3's arguments. Fails gracefully if the file does not exist.
     let stage3_args = FileReader::open(stage3_args_filename.as_ptr() as *const _, &file_funcs)
         .ok()
         .and_then(|mut args_reader| {
@@ -144,33 +170,34 @@ pub extern "C" fn main() -> u64 {
             };
 
             unsafe {
-                let image_name_length = (GetFullPathNameA)(
-                    stage3_filename.as_ptr() as *const _,
-                    0,
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                ) as usize;
-
                 let args_len = raw_args.len();
-                // 4 extra characters for the null terminator, quotes for the image name, and space separating image name and args
-                let args_full_len = args_len + image_name_length + 4;
+                // 3 extra characters for the quotes surrounding the image name, and space separating image name and args.
+                // A null terminator character isn't necessary since it is already accounted for by `image_name.len()`
+                let args_full_len = args_len + image_name.len() + 3;
                 let args_with_image_name = heap_alloc!(args_full_len) as *mut u8;
+
+                let mut offset = 0;
                 args_with_image_name.write(b'"');
-                let image_start = args_with_image_name.offset(1);
+                offset += 1;
 
-                let written_chars = (GetFullPathNameA)(
-                    stage3_filename.as_ptr() as *const _,
-                    args_full_len as u32,
-                    image_start,
-                    core::ptr::null_mut(),
-                ) as isize;
+                core::ptr::copy_nonoverlapping(
+                    image_name.as_ptr(),
+                    args_with_image_name.offset(offset),
+                    image_name.len(),
+                );
+                offset += image_name.len() as isize;
 
-                image_start.offset(written_chars).write(b'"');
-                image_start.offset(written_chars + 1).write(b' ');
+                args_with_image_name.offset(offset).write(b'"');
+                offset += 1;
 
-                let prog_args_start = image_start.offset(written_chars + 2);
+                args_with_image_name.offset(offset).write(b' ');
+                offset += 1;
 
-                core::ptr::copy_nonoverlapping(raw_args.as_ptr(), prog_args_start, raw_args.len());
+                core::ptr::copy_nonoverlapping(
+                    raw_args.as_ptr(),
+                    args_with_image_name.offset(offset),
+                    raw_args.len(),
+                );
 
                 let args_slice = core::slice::from_raw_parts(args_with_image_name, args_full_len);
                 let utf8_args = match core::str::from_utf8(args_slice) {
@@ -187,12 +214,15 @@ pub extern "C" fn main() -> u64 {
             }
         });
 
+    let image_name_utf16 = match core::str::from_utf8(image_name) {
+        Ok(name) => unsafe { solstice_loader::utf8_to_utf16(name, VirtualAlloc) },
+        Err(_) => return STAGE2_ERROR_INVALID_UTF8,
+    };
+
     debug_print!("Attempting to load PE");
     let context = LoaderContext {
         buffer: pe_data,
-        image_name: Some(&[
-            'r' as u16, 'u' as u16, 'n' as u16, '.' as u16, 'e' as u16, 'x' as u16, 'e' as u16,
-        ]),
+        image_name: Some(image_name_utf16),
         args: stage3_args.as_deref(),
         modules: DependentModules {
             kernelbase: kernelbase_ptr as *mut _,

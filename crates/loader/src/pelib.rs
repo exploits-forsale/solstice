@@ -492,7 +492,7 @@ pub fn write_import_table(
 }
 
 /// Patches the PEB to reflect the new image command line arguments
-pub unsafe fn patch_peb(args: Option<&[u16]>) {
+pub unsafe fn patch_peb(args: Option<&[u16]>, image_name: Option<&[u16]>) {
     let peb = (*teb()).ProcessEnvironmentBlock;
 
     if let Some(args) = args {
@@ -500,6 +500,13 @@ pub unsafe fn patch_peb(args: Option<&[u16]>) {
         (*(*peb).ProcessParameters).CommandLine.Buffer = (args.as_ptr() as *mut _);
         (*(*peb).ProcessParameters).CommandLine.Length = len as u16;
         (*(*peb).ProcessParameters).CommandLine.MaximumLength = len as u16;
+    }
+
+    if let Some(image_name) = image_name {
+        let len = image_name.len() * core::mem::size_of::<u16>();
+        (*(*peb).ProcessParameters).ImagePathName.Buffer = (image_name.as_ptr() as *mut _);
+        (*(*peb).ProcessParameters).ImagePathName.Length = len as u16;
+        (*(*peb).ProcessParameters).ImagePathName.MaximumLength = len as u16;
     }
 }
 

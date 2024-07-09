@@ -266,7 +266,7 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
     patch_kernelbase(context.args.clone(), context.modules.kernelbase);
 
     // Patch the PEB
-    patch_peb(context.args);
+    patch_peb(context.args, context.image_name);
 
     // Create a new thread to execute the image
     execute_image(entrypoint, context.fns.create_thread_fn);
