@@ -14,7 +14,7 @@ pub mod windows;
 
 use pelib::{
     fix_base_relocations, get_dos_header, get_headers_size, get_image_size, get_nt_header,
-    patch_kernelbase, patch_peb, write_import_table, write_sections,
+    patch_kernelbase, patch_module_list, patch_peb, write_import_table, write_sections,
 };
 use utils::detect_platform;
 
@@ -267,6 +267,9 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
 
     // Patch the PEB
     patch_peb(context.args, context.image_name);
+
+    // TODO: Patch the module list
+    patch_module_list(context.image_name);
 
     // Create a new thread to execute the image
     execute_image(entrypoint, context.fns.create_thread_fn);

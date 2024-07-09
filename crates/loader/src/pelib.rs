@@ -510,6 +510,8 @@ pub unsafe fn patch_peb(args: Option<&[u16]>, image_name: Option<&[u16]>) {
     }
 }
 
+/// For the given `module` and `name`, parses the PE headers and attempts to find
+/// a section with the given `name`.
 pub fn get_module_section(module: *mut u8, name: &[u8]) -> Option<&'static mut [u8]> {
     if name.len() > 8 {
         return None;
@@ -517,11 +519,6 @@ pub fn get_module_section(module: *mut u8, name: &[u8]) -> Option<&'static mut [
 
     let dosheader = get_dos_header(module as *const c_void);
     let ntheader = get_nt_header(module as *const _, dosheader);
-
-    #[cfg(target_arch = "x86_64")]
-    let ntheader_ref: &IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
-    #[cfg(target_arch = "x86")]
-    let ntheader_ref: &IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
 
     let number_of_sections = get_number_of_sections(ntheader);
     let nt_header_size = get_nt_header_size();
@@ -547,7 +544,9 @@ pub fn get_module_section(module: *mut u8, name: &[u8]) -> Option<&'static mut [
     None
 }
 
-/// Patches kernelbase to reflect some of the new image's data
+/// Patches kernelbase to reflect some of the new image's data, including:
+///
+/// - The command line arguments
 pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
     if let Some(args) = args {
         let peb = (*teb()).ProcessEnvironmentBlock;
@@ -583,6 +582,12 @@ pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
         }
     }
 }
+
+/// Patches the module list to change the old image name to the new image name.
+///
+/// This is useful to ensure that a program that depends on `GetModuleHandle*`
+/// doesn't fail simply because its module is not found
+pub fn patch_module_list(image_name: Option<&[u16]>) {}
 
 /// Returns the Thread Environment Block (TEB)
 pub fn teb() -> *mut Win32::System::Threading::TEB {
