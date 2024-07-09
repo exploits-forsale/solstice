@@ -6,6 +6,18 @@ use crate::{
     PVOID,
 };
 
+#[global_allocator]
+static DO_NOT_USE_ALLOCATOR: DummyGlobalAlloc = DummyGlobalAlloc {};
+
+// This hack taken from: https://github.com/microsoft/windows-drivers-rs/blob/27309815433e0a550902e835220d7d6a24822477/crates/wdk-sys/src/lib.rs#L30C1-L36C2
+// FIXME: Is there any way to avoid this stub? See https://github.com/rust-lang/rust/issues/101134
+#[allow(missing_docs)]
+#[allow(clippy::missing_const_for_fn)] // const extern is not yet supported: https://github.com/rust-lang/rust/issues/64926
+#[no_mangle]
+pub extern "system" fn __CxxFrameHandler3() -> i32 {
+    0
+}
+
 pub struct DummyGlobalAlloc {}
 
 unsafe impl GlobalAlloc for DummyGlobalAlloc {

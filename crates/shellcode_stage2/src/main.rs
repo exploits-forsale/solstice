@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
@@ -5,11 +6,15 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use core::arch::asm;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
+use alloc::vec::Vec;
+use embedded_io::{ErrorType, Write};
 use shellcode_utils::prelude::*;
 use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
 
@@ -24,9 +29,6 @@ const STAGE3_ENV_ARGS_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\a
 const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x200000000_00000001;
 const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x200000000_00000002;
 const STAGE2_ERROR_INVALID_UTF8: u64 = 0x200000000_00000003;
-
-#[global_allocator]
-static DO_NOT_USE_ALLOCATOR: DummyGlobalAlloc = DummyGlobalAlloc {};
 
 #[no_mangle]
 pub extern "C" fn main() -> u64 {
@@ -54,6 +56,15 @@ pub extern "C" fn main() -> u64 {
         };
     }
 
+    macro_rules! debug_print2 {
+        ($msg:expr) => {
+            #[cfg(feature = "debug")]
+            unsafe {
+                OutputDebugStringA($msg.as_ptr() as _)
+            }
+        };
+    }
+
     debug_print!("Hello from stage2");
 
     let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
@@ -66,6 +77,20 @@ pub extern "C" fn main() -> u64 {
     let GlobalAlloc = fetch_global_alloc(kernelbase_ptr);
     let GlobalFree = fetch_global_free(kernelbase_ptr);
     let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
+
+    // let allocator = WinGlobalAlloc::new(kernel32_ptr);
+    // let mut v = alloc::vec::Vec::with_capacity_in(100, allocator);
+    // v.extend_from_slice(b"hello from dynamically allocated string!\n\0");
+
+    // use embedded_io::*;
+
+    // debug_break!();
+    // let res = write!(
+    //     v.as_mut_slice(),
+    //     "hello from formatted string! \n\0",
+    //     //VirtualAlloc
+    // );
+    // debug_print2!(v);
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);

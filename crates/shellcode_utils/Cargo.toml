@@ -18,3 +18,7 @@ default-features = false
 version = "0.52.0"
 default-features = false
 features = ["Win32_System_Threading", "Win32_Foundation", "Win32_System_Kernel"]
+
+[features]
+default = ["alloc"]
+alloc = []

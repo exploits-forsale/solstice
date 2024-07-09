@@ -8,6 +8,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(overflowing_literals)]
 
+#[cfg(feature = "alloc")]
 pub mod alloc;
 pub mod binds;
 pub mod consts;
