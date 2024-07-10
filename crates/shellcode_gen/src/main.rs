@@ -64,7 +64,8 @@ pub fn rewrite_shellcode(src_path: &str) -> Result<PathBuf> {
             continue;
         }
         let start = section.pointer_to_raw_data as usize;
-        let size = section.size_of_raw_data as usize;
+        // we use virtual size instead of raw size to remove any padding data
+        let size = section.virtual_size as usize;
 
         let shellcode = File::create(&dst_path)?;
         let mut buf_writer = BufWriter::new(shellcode);
@@ -93,9 +94,8 @@ pub fn rewrite_shellcode(src_path: &str) -> Result<PathBuf> {
         }
         println!("== after patch ==");
         show_disassemble(&buffer[start..start + size], 5);
-        for i in start..start + size {
-            buf_writer.write(&[buffer[i]])?;
-        }
+
+        buf_writer.write_all(&buffer[start..start + size])?;
         buf_writer.flush().unwrap();
     }
 
