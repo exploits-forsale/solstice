@@ -78,7 +78,7 @@ pub extern "C" fn main() -> u64 {
     // Kernel32 imports
     let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernelbase_ptr); //kernel32_ptr.clone().map(fetch_rtl_add_fn_table);
 
-    let allocator = WinVirtualAlloc::new(kernelbase_ptr);
+    let allocator = WinGlobalAlloc::new(kernelbase_ptr);
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
