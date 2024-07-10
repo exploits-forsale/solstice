@@ -12,6 +12,7 @@ use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
+use alloc::vec::Vec;
 use allocators::{WinGlobalAlloc, WinVirtualAlloc};
 use shellcode_utils::prelude::*;
 use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
@@ -72,7 +73,6 @@ pub extern "C" fn main() -> u64 {
     let GetProcAddress = fetch_get_proc_address(kernelbase_ptr);
     let LoadLibraryA = fetch_load_library(kernelbase_ptr);
     let CreateThread = fetch_create_thread(kernelbase_ptr);
-    let GlobalAlloc = fetch_global_alloc(kernelbase_ptr);
     let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
     // Kernel32 imports
@@ -82,12 +82,6 @@ pub extern "C" fn main() -> u64 {
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
-
-    macro_rules! heap_alloc {
-        ($size:expr) => {
-            unsafe { (GlobalAlloc)(0x40, $size) }
-        };
-    }
 
     let mut stage3_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
     unsafe {
@@ -110,17 +104,19 @@ pub extern "C" fn main() -> u64 {
         );
 
         // Allocate some memory for the image
-        let image_full_name = heap_alloc!(image_name_length as usize) as *mut u8;
+        let mut image_full_name = Vec::with_capacity_in(image_name_length as usize, &allocator);
 
         // Get the full path name
         let image_full_name_len = (GetFullPathNameA)(
             stage3_filename.as_ptr() as *const _,
             image_name_length,
-            image_full_name,
+            image_full_name.as_mut_ptr(),
             core::ptr::null_mut(),
         ) as usize;
 
-        core::slice::from_raw_parts(image_full_name, image_full_name_len)
+        image_full_name.set_len(image_full_name_len + 1);
+
+        image_full_name
     };
 
     let file_funcs = FileReaderFuncs {
@@ -136,7 +132,7 @@ pub extern "C" fn main() -> u64 {
     let stage3_reader = FileReader::open(
         stage3_filename.as_ptr() as *const _,
         &file_funcs,
-        allocator.clone(),
+        &allocator,
     );
 
     if stage3_reader.is_err() {
@@ -171,7 +167,7 @@ pub extern "C" fn main() -> u64 {
     let stage3_args = FileReader::open(
         stage3_args_filename.as_ptr() as *const _,
         &file_funcs,
-        allocator.clone(),
+        &allocator,
     )
     .ok()
     .and_then(|mut args_reader| {
@@ -192,39 +188,38 @@ pub extern "C" fn main() -> u64 {
             // 3 extra characters for the quotes surrounding the image name, and space separating image name and args.
             // A null terminator character isn't necessary since it is already accounted for by `image_name.len()`
             let args_full_len = args_len + image_name.len() + 3;
-            let args_with_image_name = heap_alloc!(args_full_len) as *mut u8;
+            let mut args_with_image_name: Vec<u8, _> =
+                Vec::with_capacity_in(args_full_len, &allocator);
+            let args_with_image_name_ptr = args_with_image_name.as_mut_ptr();
 
             let mut offset = 0;
-            args_with_image_name.write(b'"');
+            args_with_image_name_ptr.write(b'"');
             offset += 1;
 
             core::ptr::copy_nonoverlapping(
                 image_name.as_ptr(),
-                args_with_image_name.offset(offset),
+                args_with_image_name_ptr.offset(offset),
                 image_name.len(),
             );
             offset += image_name.len() as isize;
 
-            args_with_image_name.offset(offset).write(b'"');
+            args_with_image_name_ptr.offset(offset).write(b'"');
             offset += 1;
 
-            args_with_image_name.offset(offset).write(b' ');
+            args_with_image_name_ptr.offset(offset).write(b' ');
             offset += 1;
 
             core::ptr::copy_nonoverlapping(
                 raw_args.as_ptr(),
-                args_with_image_name.offset(offset),
+                args_with_image_name_ptr.offset(offset),
                 raw_args.len(),
             );
 
-            let args_slice = core::slice::from_raw_parts(args_with_image_name, args_full_len);
+            let args_slice = core::slice::from_raw_parts(args_with_image_name_ptr, args_full_len);
             let utf8_args = match core::str::from_utf8(args_slice) {
                 Ok(s) => s,
                 Err(_) => return None,
             };
-
-            // (GlobalFree)(args_with_image_name as *mut _);
-            (VirtualFree)(raw_args.as_ptr() as *mut _, 0, 0x00008000);
 
             let args = solstice_loader::utf8_to_utf16(utf8_args, VirtualAlloc);
 
@@ -232,7 +227,7 @@ pub extern "C" fn main() -> u64 {
         }
     });
 
-    let image_name_utf16 = match core::str::from_utf8(image_name) {
+    let image_name_utf16 = match core::str::from_utf8(image_name.as_slice()) {
         Ok(name) => unsafe { solstice_loader::utf8_to_utf16(name, VirtualAlloc) },
         Err(_) => return STAGE2_ERROR_INVALID_UTF8,
     };
