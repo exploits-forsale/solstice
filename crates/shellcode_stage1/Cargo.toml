@@ -21,14 +21,6 @@ panic = "abort"
 opt-level = "z"
 lto = true
 
-[dependencies.num]
-version = "0.4"
-default-features = false
-
-[dependencies.num-traits]
-version = "0.2"
-default-features = false
-
 [features]
 default = []
 debug = []

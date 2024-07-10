@@ -18,9 +18,6 @@ panic = "abort"
 opt-level = "z"
 lto = true
 
-[dependencies]
-embedded-io = { version = "0.6", features = ["alloc"] }
-
 [dependencies.shellcode_utils]
 path = "../shellcode_utils"
 

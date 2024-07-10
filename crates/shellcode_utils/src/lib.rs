@@ -1,3 +1,4 @@
+#![feature(new_uninit)]
 #![feature(allocator_api)]
 #![feature(extended_varargs_abi_support)]
 #![feature(strict_provenance)]
@@ -8,8 +9,10 @@
 #![allow(non_upper_case_globals)]
 #![allow(overflowing_literals)]
 
+extern crate alloc;
+
 #[cfg(feature = "alloc")]
-pub mod alloc;
+pub mod allocators;
 pub mod binds;
 pub mod consts;
 pub mod file;

@@ -8,13 +8,14 @@
 
 extern crate alloc;
 
-use core::arch::asm;
+use core::cell::OnceCell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
+use core::{arch::asm, cell::UnsafeCell};
 
 use alloc::vec::Vec;
-use embedded_io::{ErrorType, Write};
+use allocators::WinGlobalAlloc;
 use shellcode_utils::prelude::*;
 use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
 
@@ -78,19 +79,12 @@ pub extern "C" fn main() -> u64 {
     let GlobalFree = fetch_global_free(kernelbase_ptr);
     let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
-    // let allocator = WinGlobalAlloc::new(kernel32_ptr);
-    // let mut v = alloc::vec::Vec::with_capacity_in(100, allocator);
-    // v.extend_from_slice(b"hello from dynamically allocated string!\n\0");
+    let allocator = WinGlobalAlloc::new(kernel32_ptr);
 
-    // use embedded_io::*;
+    let mut v = alloc::vec::Vec::with_capacity_in(100, &allocator);
+    v.extend_from_slice(b"hello from dynamically allocated string!\n\0");
 
-    // debug_break!();
-    // let res = write!(
-    //     v.as_mut_slice(),
-    //     "hello from formatted string! \n\0",
-    //     //VirtualAlloc
-    // );
-    // debug_print2!(v);
+    debug_print2!(v);
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
@@ -145,7 +139,12 @@ pub extern "C" fn main() -> u64 {
 
     // Map the returned errors to hard constants since the constants have the upper bit set
     // to signal which stage failed
-    let stage3_reader = FileReader::open(stage3_filename.as_ptr() as *const _, &file_funcs);
+    let stage3_reader = FileReader::open(
+        stage3_filename.as_ptr() as *const _,
+        &file_funcs,
+        allocator.clone(),
+    );
+
     if stage3_reader.is_err() {
         return STAGE2_ERROR_FILE_OPEN_FAILED;
     }
@@ -153,9 +152,7 @@ pub extern "C" fn main() -> u64 {
 
     // Read the full stage3 PE file to memory
     let pe_data = match stage3_reader.read_all() {
-        Ok((stage3_data, stage3_size)) => unsafe {
-            core::slice::from_raw_parts(stage3_data as *const u8, stage3_size as usize)
-        },
+        Ok(data) => data,
         Err(FileReaderError::ReadFailed) => {
             return STAGE2_ERROR_FILE_READ_FAILED;
         }
@@ -177,67 +174,69 @@ pub extern "C" fn main() -> u64 {
         );
     }
 
-    let stage3_args = FileReader::open(stage3_args_filename.as_ptr() as *const _, &file_funcs)
-        .ok()
-        .and_then(|mut args_reader| {
-            // Read the arguments to a buffer, create a new pointer array to hold all the args, then copy args over.
-            let raw_args = match args_reader.read_all() {
-                Ok((args_data, args_size)) => unsafe {
-                    core::slice::from_raw_parts(args_data as *const u8, args_size)
-                },
-                Err(FileReaderError::ReadFailed) => {
-                    return None;
-                }
-                Err(FileReaderError::OpenFailed) => {
-                    // Should be impossible but we'll handle it anyways for completeness
-                    unreachable!();
-                }
+    let stage3_args = FileReader::open(
+        stage3_args_filename.as_ptr() as *const _,
+        &file_funcs,
+        allocator.clone(),
+    )
+    .ok()
+    .and_then(|mut args_reader| {
+        // Read the arguments to a buffer, create a new pointer array to hold all the args, then copy args over.
+        let raw_args = match args_reader.read_all() {
+            Ok(data) => data,
+            Err(FileReaderError::ReadFailed) => {
+                return None;
+            }
+            Err(FileReaderError::OpenFailed) => {
+                // Should be impossible but we'll handle it anyways for completeness
+                unreachable!();
+            }
+        };
+
+        unsafe {
+            let args_len = raw_args.len();
+            // 3 extra characters for the quotes surrounding the image name, and space separating image name and args.
+            // A null terminator character isn't necessary since it is already accounted for by `image_name.len()`
+            let args_full_len = args_len + image_name.len() + 3;
+            let args_with_image_name = heap_alloc!(args_full_len) as *mut u8;
+
+            let mut offset = 0;
+            args_with_image_name.write(b'"');
+            offset += 1;
+
+            core::ptr::copy_nonoverlapping(
+                image_name.as_ptr(),
+                args_with_image_name.offset(offset),
+                image_name.len(),
+            );
+            offset += image_name.len() as isize;
+
+            args_with_image_name.offset(offset).write(b'"');
+            offset += 1;
+
+            args_with_image_name.offset(offset).write(b' ');
+            offset += 1;
+
+            core::ptr::copy_nonoverlapping(
+                raw_args.as_ptr(),
+                args_with_image_name.offset(offset),
+                raw_args.len(),
+            );
+
+            let args_slice = core::slice::from_raw_parts(args_with_image_name, args_full_len);
+            let utf8_args = match core::str::from_utf8(args_slice) {
+                Ok(s) => s,
+                Err(_) => return None,
             };
 
-            unsafe {
-                let args_len = raw_args.len();
-                // 3 extra characters for the quotes surrounding the image name, and space separating image name and args.
-                // A null terminator character isn't necessary since it is already accounted for by `image_name.len()`
-                let args_full_len = args_len + image_name.len() + 3;
-                let args_with_image_name = heap_alloc!(args_full_len) as *mut u8;
+            // (GlobalFree)(args_with_image_name as *mut _);
+            (VirtualFree)(raw_args.as_ptr() as *mut _, 0, 0x00008000);
 
-                let mut offset = 0;
-                args_with_image_name.write(b'"');
-                offset += 1;
+            let args = solstice_loader::utf8_to_utf16(utf8_args, VirtualAlloc);
 
-                core::ptr::copy_nonoverlapping(
-                    image_name.as_ptr(),
-                    args_with_image_name.offset(offset),
-                    image_name.len(),
-                );
-                offset += image_name.len() as isize;
-
-                args_with_image_name.offset(offset).write(b'"');
-                offset += 1;
-
-                args_with_image_name.offset(offset).write(b' ');
-                offset += 1;
-
-                core::ptr::copy_nonoverlapping(
-                    raw_args.as_ptr(),
-                    args_with_image_name.offset(offset),
-                    raw_args.len(),
-                );
-
-                let args_slice = core::slice::from_raw_parts(args_with_image_name, args_full_len);
-                let utf8_args = match core::str::from_utf8(args_slice) {
-                    Ok(s) => s,
-                    Err(_) => return None,
-                };
-
-                (GlobalFree)(args_with_image_name as *mut _);
-                (VirtualFree)(raw_args.as_ptr() as *mut _, 0, 0x00008000);
-
-                let args = solstice_loader::utf8_to_utf16(utf8_args, VirtualAlloc);
-
-                Some(args)
-            }
-        });
+            Some(args)
+        }
+    });
 
     let image_name_utf16 = match core::str::from_utf8(image_name) {
         Ok(name) => unsafe { solstice_loader::utf8_to_utf16(name, VirtualAlloc) },
@@ -246,7 +245,7 @@ pub extern "C" fn main() -> u64 {
 
     debug_print!("Attempting to load PE");
     let context = LoaderContext {
-        buffer: pe_data,
+        buffer: &pe_data,
         image_name: Some(image_name_utf16),
         args: stage3_args.as_deref(),
         modules: DependentModules {
