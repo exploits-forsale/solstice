@@ -21,7 +21,6 @@ pub mod prelude;
 
 use crate::binds::*;
 use core::arch::asm;
-use core::panic::PanicInfo;
 use core::ptr::null_mut;
 use paste::paste;
 

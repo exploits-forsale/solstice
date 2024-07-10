@@ -8,13 +8,10 @@
 
 extern crate alloc;
 
-use core::cell::OnceCell;
-use core::ffi::c_void;
+use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
-use core::{arch::asm, cell::UnsafeCell};
 
-use alloc::vec::Vec;
 use allocators::WinGlobalAlloc;
 use shellcode_utils::prelude::*;
 use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
@@ -76,7 +73,6 @@ pub extern "C" fn main() -> u64 {
     let CreateThread = fetch_create_thread(kernelbase_ptr);
     let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernel32_ptr);
     let GlobalAlloc = fetch_global_alloc(kernelbase_ptr);
-    let GlobalFree = fetch_global_free(kernelbase_ptr);
     let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
     let allocator = WinGlobalAlloc::new(kernel32_ptr);

@@ -3,9 +3,7 @@ use core::{
     ffi::{c_char, c_int, c_void},
 };
 
-use windows_sys::Win32;
-
-use crate::{binds::*, get_func_ptr_by_name, resolve_func};
+use crate::{binds::*, resolve_func};
 
 #[repr(transparent)]
 struct CachedPtr<T, F = fn() -> T>(LazyCell<T, F>);

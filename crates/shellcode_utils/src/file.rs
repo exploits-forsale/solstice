@@ -1,6 +1,6 @@
 use core::alloc::Allocator;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 
 use crate::{
     consts::CreateFileAccess,
