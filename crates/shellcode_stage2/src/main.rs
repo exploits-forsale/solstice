@@ -12,7 +12,7 @@ use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
-use allocators::WinGlobalAlloc;
+use allocators::{WinGlobalAlloc, WinVirtualAlloc};
 use shellcode_utils::prelude::*;
 use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
 
@@ -41,7 +41,7 @@ pub extern "C" fn main() -> u64 {
     // }
 
     let kernelbase_ptr = get_kernelbase().unwrap();
-    let kernel32_ptr = get_kernel32(kernelbase_ptr).unwrap();
+    //let kernel32_ptr = get_kernel32(kernelbase_ptr);
 
     #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
@@ -65,22 +65,20 @@ pub extern "C" fn main() -> u64 {
 
     debug_print!("Hello from stage2");
 
+    // Kernelbase Imports
     let VirtualAlloc = fetch_virtual_alloc(kernelbase_ptr);
     let VirtualFree = fetch_virtual_free(kernelbase_ptr);
     let VirtualProtect = fetch_virtual_protect(kernelbase_ptr);
     let GetProcAddress = fetch_get_proc_address(kernelbase_ptr);
     let LoadLibraryA = fetch_load_library(kernelbase_ptr);
     let CreateThread = fetch_create_thread(kernelbase_ptr);
-    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernel32_ptr);
     let GlobalAlloc = fetch_global_alloc(kernelbase_ptr);
     let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
-    let allocator = WinGlobalAlloc::new(kernel32_ptr);
+    // Kernel32 imports
+    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernelbase_ptr); //kernel32_ptr.clone().map(fetch_rtl_add_fn_table);
 
-    let mut v = alloc::vec::Vec::with_capacity_in(100, &allocator);
-    v.extend_from_slice(b"hello from dynamically allocated string!\n\0");
-
-    debug_print2!(v);
+    let allocator = WinVirtualAlloc::new(kernelbase_ptr);
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
@@ -255,7 +253,7 @@ pub extern "C" fn main() -> u64 {
             // TODO
             create_thread_fn: CreateThread,
             get_module_handle_fn: GetModuleHandleA,
-            rtl_add_function_table_fn: Some(RtlAddFunctionTable),
+            rtl_add_function_table_fn: None,
         },
     };
     unsafe {

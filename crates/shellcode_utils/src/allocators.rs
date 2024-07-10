@@ -1,6 +1,7 @@
 use core::alloc::{AllocError, Allocator, GlobalAlloc};
 use core::ptr;
 
+use crate::debug_break;
 use crate::functions::{fetch_virtual_alloc, fetch_virtual_free, VirtualAllocFn, VirtualFreeFn};
 use crate::{
     functions::{fetch_global_alloc, fetch_global_free, GlobalAllocFn, GlobalFreeFn},
@@ -38,10 +39,10 @@ pub struct WinGlobalAlloc {
 }
 
 impl WinGlobalAlloc {
-    pub fn new(kernel32_ptr: PVOID) -> Self {
+    pub fn new(kernelbase_ptr: PVOID) -> Self {
         Self {
-            global_alloc_fn: fetch_global_alloc(kernel32_ptr),
-            global_free_fn: fetch_global_free(kernel32_ptr),
+            global_alloc_fn: fetch_global_alloc(kernelbase_ptr),
+            global_free_fn: fetch_global_free(kernelbase_ptr),
         }
     }
 }
