@@ -577,6 +577,9 @@ pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
                 let args_byte_len = (args.len() * core::mem::size_of::<u16>()) + 1;
                 unicode_str.Buffer = args.as_ptr() as *mut _;
                 unicode_str.Length = args_byte_len as u16;
+                unsafe {
+                    core::arch::asm!("int 3");
+                }
                 unicode_str.MaximumLength = args_byte_len as u16;
             }
         }

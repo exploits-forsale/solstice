@@ -196,12 +196,14 @@ pub extern "C" fn main() -> u64 {
             args_with_image_name_ptr.write(b'"');
             offset += 1;
 
+            // do not copy the image name's null terminator
+            let image_name_len = image_name.len() - 1;
             core::ptr::copy_nonoverlapping(
                 image_name.as_ptr(),
                 args_with_image_name_ptr.offset(offset),
-                image_name.len(),
+                image_name_len,
             );
-            offset += image_name.len() as isize;
+            offset += image_name_len as isize;
 
             args_with_image_name_ptr.offset(offset).write(b'"');
             offset += 1;
@@ -215,22 +217,33 @@ pub extern "C" fn main() -> u64 {
                 raw_args.len(),
             );
 
-            let args_slice = core::slice::from_raw_parts(args_with_image_name_ptr, args_full_len);
-            let utf8_args = match core::str::from_utf8(args_slice) {
+            args_with_image_name.set_len(args_full_len);
+
+            // Add a null terminator
+            args_with_image_name.push(0);
+
+            let utf8_args = match core::str::from_utf8(&args_with_image_name) {
                 Ok(s) => s,
                 Err(_) => return None,
             };
 
-            let args = solstice_loader::utf8_to_utf16(utf8_args, VirtualAlloc);
+            let args = utf8_to_utf16(utf8_args, &allocator);
 
             Some(args)
         }
     });
 
     let image_name_utf16 = match core::str::from_utf8(image_name.as_slice()) {
-        Ok(name) => unsafe { solstice_loader::utf8_to_utf16(name, VirtualAlloc) },
+        Ok(name) => unsafe { utf8_to_utf16(name, &allocator) },
         Err(_) => return STAGE2_ERROR_INVALID_UTF8,
     };
+
+    // These will last for the duration of the program, so let's leak them
+    let image_name_utf16 = image_name_utf16.leak();
+    let stage3_args = stage3_args.map(|args| {
+        let args = args.leak();
+        args
+    });
 
     debug_print!("Attempting to load PE");
     let context = LoaderContext {

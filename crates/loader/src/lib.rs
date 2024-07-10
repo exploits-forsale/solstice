@@ -86,28 +86,6 @@ fn is_platforms_same(data: &[u8]) {
     }
 }
 
-/// Allocates a new block of memory and re-encodes the input string as utf16. Appends
-/// a null terminator to the end as well.
-pub unsafe fn utf8_to_utf16(input: &str, alloc_fn: VirtualAllocFn) -> &mut [u16] {
-    // TODO: not very efficient
-    // + 1 here is for the null terminator
-    let new_len = input.encode_utf16().count() + 1;
-
-    // new buffer has 1 extra char for the null terminator
-    let new_buffer = (alloc_fn)(
-        core::ptr::null_mut(),
-        new_len * core::mem::size_of::<u16>(),
-        0x3000,
-        4,
-    ) as *mut u16;
-
-    for (i, c) in input.encode_utf16().enumerate() {
-        new_buffer.offset(i as isize).write(c)
-    }
-
-    core::slice::from_raw_parts_mut(new_buffer, new_len)
-}
-
 unsafe fn reflective_loader_impl(context: LoaderContext) {
     unsafe { core::arch::asm!("and rsp, ~0xf") };
 
