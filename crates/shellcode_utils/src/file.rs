@@ -59,7 +59,7 @@ where
                 CreateFileAccess::GenericRead as u32, // Desired access
                 0,                                    // ShareMode
                 core::ptr::null_mut() as PVOID,       // Security attributes
-                4,                                    // OPEN_ALWAYS
+                3,                                    // OPEN_EXISTING
                 0x80,                                 // FILE_ATTRIBUTE_NORMAL
                 core::ptr::null_mut() as PVOID,       // hTemplateFile
             )
