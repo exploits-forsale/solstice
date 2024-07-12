@@ -3,6 +3,8 @@ use core::{
     ffi::{c_char, c_int, c_void},
 };
 
+use windows_sys::Win32::Networking::WinSock::{QOS, SOCKET, WSABUF, WSADATA, WSAPROTOCOL_INFOA};
+
 use crate::{binds::*, resolve_func};
 
 #[repr(transparent)]
@@ -89,6 +91,39 @@ pub type GetFullPathNameAFn = unsafe extern "system" fn(
     lpFilePart: *mut *const u8,
 ) -> u32;
 
+pub type WSAStartupFn = unsafe extern "system" fn(wVersionRequired: u16, lpsWSAData: *mut WSADATA);
+
+pub type WSASocketAFn = unsafe extern "system" fn(
+    af: c_int,
+    typ: c_int,
+    protocol: c_int,
+    lpProtocolInfo: *const WSAPROTOCOL_INFOA,
+    group: *const c_void, // we won't use, no need to bring in the feature for the appropriate type
+    dwFlags: u32,
+) -> SOCKET;
+
+pub type WSAConnectFn = unsafe extern "system" fn(
+    socket: SOCKET,
+    sockaddr: *const c_char,
+    namelen: c_int,
+    lpCallerData: *const WSABUF,
+    lpCalleeData: *mut WSABUF,
+    lpSQOS: *const QOS,
+    lpGQOS: *const QOS,
+);
+
+pub type WriteFileFn = unsafe extern "system" fn(
+    hFile: PVOID,
+    lpBuffer: *const c_void,
+    nNumberOfBytesToWrite: u32,
+    lpNumberOfBytesWritten: *mut u32,
+    lpOverlapped: *mut c_void,
+);
+
+pub type GetLastErrorFn = unsafe extern "system" fn() -> u32;
+
+pub type inet_addrFn = unsafe extern "system" fn(cp: *const c_char) -> u32;
+
 // pub fn get_kernel32_test() -> PVOID {
 //     static KERNEL32: CachedPtr<PVOID> = CachedPtr::new(|| {
 //         let KERNEL32_STR: [u16; 13] = [75, 69, 82, 78, 69, 76, 51, 50, 46, 68, 76, 76, 0];
@@ -124,6 +159,24 @@ pub fn get_kernel32(kernelbase_ptr: PVOID) -> Option<PVOID> {
     })
 }
 
+pub fn get_ws2_32(kernelbase_ptr: PVOID) -> Option<PVOID> {
+    let WS2_32_WSTR: [u16; 11] = [
+        'W' as u16, 'S' as u16, '2' as u16, '_' as u16, '3' as u16, '2' as u16, '.' as u16,
+        'd' as u16, 'l' as u16, 'l' as u16, 0,
+    ];
+
+    crate::get_module_by_name(WS2_32_WSTR.as_ptr()).or_else(|| {
+        let ws2_32_str = concat!("WS2_32.dll", "\0");
+        let ws2_32_ptr =
+            unsafe { (fetch_load_library(kernelbase_ptr))(ws2_32_str.as_ptr() as *const _) };
+        if ws2_32_ptr.is_null() {
+            None
+        } else {
+            Some(ws2_32_ptr)
+        }
+    })
+}
+
 pub fn get_user32(kernelbase_ptr: PVOID) -> PVOID {
     let user32 = concat!("user32.dll", "\0");
     let mut u32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(user32.as_ptr() as *const _) };
@@ -133,6 +186,26 @@ pub fn get_user32(kernelbase_ptr: PVOID) -> PVOID {
     }
 
     u32_ptr
+}
+
+pub fn fetch_get_last_error(kernelbase_ptr: PVOID) -> GetLastErrorFn {
+    resolve_func!(kernelbase_ptr, "GetLastError")
+}
+
+pub fn fetch_wsa_startup(ws2_32_ptr: PVOID) -> WSAStartupFn {
+    resolve_func!(ws2_32_ptr, "WSAStartup")
+}
+
+pub fn fetch_wsa_connect(ws2_32_ptr: PVOID) -> WSAConnectFn {
+    resolve_func!(ws2_32_ptr, "WSAConnect")
+}
+
+pub fn fetch_wsa_socket(ws2_32_ptr: PVOID) -> WSASocketAFn {
+    resolve_func!(ws2_32_ptr, "WSASocketA")
+}
+
+pub fn fetch_inet_addr(ws2_32_ptr: PVOID) -> inet_addrFn {
+    resolve_func!(ws2_32_ptr, "inet_addr")
 }
 
 pub fn fetch_get_full_path_name(kernelbase_ptr: PVOID) -> GetFullPathNameAFn {
@@ -185,6 +258,10 @@ pub fn fetch_load_library(kernelbase_ptr: PVOID) -> LoadLibraryAFn {
 
 pub fn fetch_create_file(kernelbase_ptr: PVOID) -> CreateFileAFn {
     resolve_func!(kernelbase_ptr, "CreateFileA")
+}
+
+pub fn fetch_write_file(kernelbase_ptr: PVOID) -> WriteFileFn {
+    resolve_func!(kernelbase_ptr, "WriteFile")
 }
 
 pub fn fetch_read_file(kernelbase_ptr: PVOID) -> ReadFileFn {

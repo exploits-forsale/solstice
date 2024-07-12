@@ -9,6 +9,11 @@ edition = "2018"
 [dependencies]
 shellcode_utils = { path = "../shellcode_utils" }
 
+[dependencies.windows-sys]
+version = "0.52.0"
+default-features = false
+features = ["Win32_Networking_WinSock"]
+
 [profile.dev]
 panic = "abort"
 # these two cut code size by 2/3

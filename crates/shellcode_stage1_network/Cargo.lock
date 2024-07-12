@@ -80,6 +80,7 @@ name = "shellcode_stage1_network"
 version = "0.1.0"
 dependencies = [
  "shellcode_utils",
+ "windows-sys",
 ]
 
 [[package]]

@@ -2,8 +2,10 @@
     "rust-analyzer.linkedProjects": [
         "./crates/loader/Cargo.toml",
         "./crates/shellcode_stage1/Cargo.toml",
+        "./crates/shellcode_stage1_network/Cargo.toml",
         "./crates/shellcode_stage2/Cargo.toml",
         "./crates/shellcode_utils/Cargo.toml",
         "./crates/test_program_rust/Cargo.toml",
+        "./crates/server/Cargo.toml",
     ]
 }

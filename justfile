@@ -1,6 +1,10 @@
 set shell := ["cmd.exe", "/c"]
 
 default-features := ""
+default-run := "../../outputs/test_program_rust.exe"
+
+run-server features=default-features run=default-run:
+    cd ./crates/server && cargo run --release --features={{features}} -- --stage2 ../../outputs/stage2.bin --run {{run}}
 
 build-stage1 features=default-features:
     cd ./crates/shellcode_stage1 && cargo build --release --features={{features}}
@@ -13,6 +17,7 @@ build-stage2 features=default-features:
 
 build-test-program-rust features=default-features:
     cd ./crates/test_program_rust && cargo build --release --features={{features}}
+    cp ./crates/test_program_rust/target/release/test_program_rust.exe ./outputs/
 
 build-exploit features=default-features:
     just --justfile {{justfile()}} build-stage1 {{features}}
@@ -26,3 +31,10 @@ generate features=default-features:
     xcopy /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
     xcopy /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
     xcopy /y outputs\\gamescript_autosave.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
+
+generate-dev features=default-features:
+    just --justfile {{justfile()}} build-exploit {{features}}
+    just --justfile {{justfile()}} build-test-program-rust {{features}}
+    xcopy /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
+    xcopy /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
+    xcopy /y outputs\\gamescript_autosave_network.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
