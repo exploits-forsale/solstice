@@ -1,0 +1,26 @@
+[package]
+name = "shellcode_stage1_network"
+version = "0.1.0"
+authors = ["b1tg <b1tg@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+shellcode_utils = { path = "../shellcode_utils" }
+
+[profile.dev]
+panic = "abort"
+# these two cut code size by 2/3
+opt-level = "z"
+lto = true
+
+[profile.release]
+panic = "abort"
+# these two cut code size by 2/3
+opt-level = "z"
+lto = true
+
+[features]
+default = []
+debug = []

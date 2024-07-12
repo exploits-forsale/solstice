@@ -5,6 +5,9 @@ default-features := ""
 build-stage1 features=default-features:
     cd ./crates/shellcode_stage1 && cargo build --release --features={{features}}
 
+build-stage1-network features=default-features:
+    cd ./crates/shellcode_stage1_network && cargo build --release --features={{features}}
+
 build-stage2 features=default-features:
     cd ./crates/shellcode_stage2 && cargo build --release --features={{features}}
 
@@ -13,6 +16,7 @@ build-test-program-rust features=default-features:
 
 build-exploit features=default-features:
     just --justfile {{justfile()}} build-stage1 {{features}}
+    just --justfile {{justfile()}} build-stage1-network {{features}}
     just --justfile {{justfile()}} build-stage2 {{features}}
     cd ./crates/shellcode_gen && cargo run --release -- ../../outputs/
 

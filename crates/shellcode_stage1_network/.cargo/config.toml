@@ -1,0 +1,27 @@
+[build]
+target = "x86_64-pc-windows-msvc"
+# target = "i686-pc-windows-msvc"
+
+rustflags = [
+    # Pre Link Args
+    #"-Z", "pre-link-arg=/NOLOGO",
+    #"-Z", "pre-link-arg=/NXCOMPAT",
+    "-Z", "pre-link-arg=/NODEFAULTLIB",
+    #"-Z", "pre-link-arg=/DYNAMICBASE",
+    #"-Z", "pre-link-arg=/MANIFEST:NO",
+    "--emit", "asm",
+    # Post Link Args
+    "-C", "link-arg=/ENTRY:main",
+    #"-C", "link-arg=/OPT:REF,ICF",
+    "-C", "link-arg=/MERGE:.edata=.rdata",
+    "-C", "link-arg=/MERGE:.rustc=.data",
+    "-C", "link-arg=/MERGE:.rdata=.text",
+    "-C", "link-arg=/MERGE:.pdata=.text",
+    #"-C", "link-arg=/INTEGRITYCHECK"
+    "-C", "link-arg=/DEBUG:NONE",
+    "-C", "link-arg=/EMITPOGOPHASEINFO",
+    "-C", "target-feature=-mmx,-sse,+soft-float",
+    "-C", "panic=abort",
+    
+
+]

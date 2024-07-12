@@ -17,6 +17,11 @@ fn main() -> Result<()> {
 
     let stage1_output = rewrite_shellcode(stage1_path)?;
 
+    let stage1_network_path =
+        "..\\shellcode_stage1_network\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage1_network.exe";
+
+    let stage1_network_output = rewrite_shellcode(stage1_network_path)?;
+
     let stage2_path =
         "..\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.exe";
     let stage2_output = rewrite_shellcode(stage2_path)?;
@@ -24,12 +29,18 @@ fn main() -> Result<()> {
     // generate the exploit code to load the stage1 code
     let gamescript_exploit = generate_gamescript_exploit(&stage1_output)?;
 
+    // generate the exploit code to load the stage1 network code
+    let gamescript_network_exploit = generate_gamescript_exploit(&stage1_network_output)?;
+
     if !output_path.exists() {
         std::fs::create_dir(output_path)?;
     }
 
     let gs_path = output_path.join("gamescript_autosave.txt");
     std::fs::write(gs_path, gamescript_exploit.as_bytes())?;
+
+    let gs_network_path = output_path.join("gamescript_autosave_network.txt");
+    std::fs::write(gs_network_path, gamescript_network_exploit.as_bytes())?;
 
     std::fs::copy(stage1_output, output_path.join("stage1.bin"))?;
     std::fs::copy(stage2_output, output_path.join("stage2.bin"))?;
