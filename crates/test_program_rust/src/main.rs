@@ -25,15 +25,6 @@ fn main() {
         let app_data = std::env::var("LOCALAPPDATA").expect("failed to get %LOCALAPPDATA%");
 
         let file_path = PathBuf::from(format!("{}\\..\\LocalState\\stage3_complete.txt", app_data));
-        #[cfg(feature = "network")]
-        {
-            if file_path.exists() {
-                let file_data = std::fs::read(&file_path).unwrap();
-                // Talk to the remote server
-                let mut socket = std::net::TcpStream::connect("192.168.1.74:8081").unwrap();
-                let _ = socket.write_all(&file_data);
-            }
-        }
         let mut file = std::fs::File::create(&file_path).unwrap();
         writeln!(
             &mut file,
@@ -43,6 +34,17 @@ fn main() {
 
         for arg in std::env::args() {
             writeln!(&mut file, "{:p} {}", arg.as_ptr(), arg).expect("failed to write to outpu");
+        }
+        drop(file);
+
+        #[cfg(feature = "network")]
+        {
+            if file_path.exists() {
+                let file_data = std::fs::read(&file_path).unwrap();
+                // Talk to the remote server
+                let mut socket = std::net::TcpStream::connect("192.168.1.74:8081").unwrap();
+                let _ = socket.write_all(&file_data);
+            }
         }
     }
 }
