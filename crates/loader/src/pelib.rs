@@ -8,13 +8,14 @@ use windows_sys::Win32::{
             IMAGE_DATA_DIRECTORY, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER,
         },
         SystemServices::{IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_IMPORT_DESCRIPTOR},
+        Threading::PEB,
     },
 };
 
 use crate::windows::{
     GetModuleHandleAFn, GetProcAddressFn, LoadLibraryAFn, VirtualAllocFn, VirtualProtectFn,
     IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_NT_SIGNATURE,
-    IMAGE_ORDINAL_FLAG,
+    IMAGE_ORDINAL_FLAG, PAGE_READWRITE,
 };
 
 /// Function to get the size of the headers
@@ -492,8 +493,19 @@ pub fn write_import_table(
 }
 
 /// Patches the PEB to reflect the new image command line arguments
-pub unsafe fn patch_peb(args: Option<&[u16]>, image_name: Option<&[u16]>) {
+pub unsafe fn patch_peb(
+    args: Option<&[u16]>,
+    image_name: Option<&[u16]>,
+    virtual_protect: VirtualProtectFn,
+) {
     let peb = (*teb()).ProcessEnvironmentBlock;
+    let mut old_permissions = 0u32;
+    (virtual_protect)(
+        peb as *const _,
+        core::mem::size_of::<PEB>(),
+        PAGE_READWRITE,
+        &mut old_permissions as *mut _,
+    );
 
     if let Some(args) = args {
         let len = args.len() * core::mem::size_of::<u16>();

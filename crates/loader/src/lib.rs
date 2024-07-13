@@ -244,7 +244,11 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
     patch_kernelbase(context.args.clone(), context.modules.kernelbase);
 
     // Patch the PEB
-    patch_peb(context.args, context.image_name);
+    patch_peb(
+        context.args,
+        context.image_name,
+        context.fns.virtual_protect,
+    );
 
     // TODO: Patch the module list
     patch_module_list(context.image_name);
