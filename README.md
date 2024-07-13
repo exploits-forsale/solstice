@@ -22,13 +22,13 @@ just build-exploit
 
 All necessary outputs will be in the `outputs/` directory.
 
-If you would like to test on the PC version of GameScript, running the following command will build execute `build-exploit`, but will copy the artifacts to the GameScript directory and overwrite its autosave state so all you have to do is click "run code":
+If you would like to test on the PC version of GameScript, running the following command will execute `build-exploit` and copy the artifacts to the GameScript directory. This will overwrite its autosave state so all you have to do is click "run code":
 
 ```
 just generate
 ```
 
-Currently the stage2 shellcode attempts to open and run `run.exe` out of GameScript's `LocalState` directory.
+Currently the stage2 shellcode attempts to open and run `run.exe` out of GameScript's `LocalState` directory. An `args.txt` file can be placed in the same directory contaning the command line string to pass to `run.exe`.
 
 ### Alternate build modes
 
