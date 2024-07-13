@@ -24,11 +24,6 @@ fn main() {
     {
         let app_data = std::env::var("LOCALAPPDATA").expect("failed to get %LOCALAPPDATA%");
 
-        // let _ = std::fs::write(
-        //     format!("{}\\..\\LocalState\\args.txt", app_data),
-        //     b"arg1 arg2 arg3_testing_with!!!chars",
-        // );
-
         let file_path = PathBuf::from(format!("{}\\..\\LocalState\\stage3_complete.txt", app_data));
         #[cfg(feature = "network")]
         {
