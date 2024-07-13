@@ -60,7 +60,7 @@ If testing on PC, you can build in debug mode to get debug output in WinDbg.
 1. Build
 
 ```
-just generate
+just generate debug
 ```
 
 2. Run GameScript
