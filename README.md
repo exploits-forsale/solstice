@@ -69,6 +69,17 @@ just generate
 
 ## Project overview
 
+solstice uses a 3 stage loader. stage1 and stage2 can be replaced with custom stages and are **not** unique to Xbox or GameScript.
+
+The stage1 loader *is* intended to work well with GameScript, and the project is intended to provide a streamlined experience with exploitation against GameScript. You can even use your own, better reflective PE loader, but you **may** have issues caused by slight differences between the Xbox SystemOS/UWP post-exploitation and a normal Windows exploitation.
+
+For example:
+
+1. The PEB on Xbox is readonly (but you can change its permissions)
+2. kernel32.dll is not loaded by default (kernelbase.dll is!)
+3. The filesystem is generally more restricted
+
+The 3-stage loader works as shown in the following diagram:
 
 ```
         ┌──────────────────────────┐                                                 
@@ -162,6 +173,9 @@ This repo is a heavily modified version of [`b1tg/rust-windows-shellcode`](https
 
 Unfortunately this project is _not_ a proper cargo workspace because Cargo does not allow you to specify a different profile per-crate in a workspace. See: https://github.com/rust-lang/cargo/issues/8264.
 
+## Why write your own PE loader?
+
+Because I could. And I know how to build/debug/deploy my own code better than an off-the-shelf project. The PE loader is certainly not as mature as others, but it works for our purposes.
 
 ## Credits
 
