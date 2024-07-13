@@ -129,7 +129,9 @@ pub extern "C" fn main() -> u64 {
             sin_port: u16::from_le_bytes(8080u16.to_be_bytes()),
             sin_addr: IN_ADDR {
                 S_un: windows_sys::Win32::Networking::WinSock::IN_ADDR_0 {
-                    S_addr: (inet_addr)(concat!("192.168.1.74", "\0").as_ptr() as *const _),
+                    S_addr: (inet_addr)(
+                        concat!(include_str!("../../../host_ip.txt"), "\0").as_ptr() as *const _,
+                    ),
                 },
             },
             sin_zero: [0u8; 8],
