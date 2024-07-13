@@ -53,7 +53,7 @@ just run-server
 just run-server ./path/to/file.exe
 ```
 
-#### Building with debug output (only works with WinDbg)
+#### Building with debug output (only works with WinDbg attached)
 
 If testing on PC, you can build in debug mode to get debug output in WinDbg.
 
@@ -66,6 +66,8 @@ just generate debug
 2. Run GameScript
 3. Attach WinDbg
 4. Run the exploit
+
+**If WinDbg is not attached the application will crash**. 
 
 ## Project overview
 
