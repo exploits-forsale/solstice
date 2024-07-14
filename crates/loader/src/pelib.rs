@@ -586,7 +586,7 @@ pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
                     ptr.offset(unicode_str_start as isize),
                 );
 
-                let args_byte_len = (args.len() * core::mem::size_of::<u16>()) + 1;
+                let args_byte_len = args.len() * core::mem::size_of::<u16>();
                 unicode_str.Buffer = args.as_ptr() as *mut _;
                 unicode_str.Length = args_byte_len as u16;
                 unicode_str.MaximumLength = args_byte_len as u16;

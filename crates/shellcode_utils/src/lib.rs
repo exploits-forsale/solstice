@@ -39,15 +39,12 @@ macro_rules! debug_break {
 /// a null terminator to the end as well.
 pub unsafe fn utf8_to_utf16<A: Allocator>(input: &str, alloc: A) -> Vec<u16, A> {
     // TODO: not very efficient
-    // + 1 here is for the null terminator
-    let new_len = input.encode_utf16().count() + 1;
+    let new_len = input.encode_utf16().count();
     let mut new_vec = Vec::with_capacity_in(new_len, alloc);
     // cannot collect directly to a custom allocator vec unfortunately
     for c in input.encode_utf16() {
         new_vec.push(c);
     }
-
-    new_vec.push(0);
 
     new_vec
 }
