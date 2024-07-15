@@ -21,10 +21,17 @@ pub mod prelude;
 
 use crate::binds::*;
 use alloc::vec::Vec;
-use core::alloc::Allocator;
 use core::arch::asm;
 use core::ptr::null_mut;
+use core::{alloc::Allocator, mem::offset_of};
+use functions::{
+    fetch_close_handle, get_create_tool_help32, get_get_current_process_id,
+    get_get_current_thread_id, get_open_thread, get_suspend_thread, get_thread_32_first,
+    get_thread_32_next, CreateToolhelp32SnapshotFn, GetCurrentThreadIdFn,
+};
 use paste::paste;
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{TH32CS_SNAPTHREAD, THREADENTRY32};
+use windows_sys::Win32::System::Threading::THREAD_SUSPEND_RESUME;
 
 #[macro_export]
 macro_rules! debug_break {
@@ -255,4 +262,44 @@ fn compare_str_u8(s: &str, u: *const u8) -> bool {
 
 fn str_to_i8(s: &str) -> *const i8 {
     s.as_bytes().as_ptr() as *const i8
+}
+
+pub unsafe fn suspend_threads(kernel32_ptr: PVOID, kernelbase_ptr: PVOID) {
+    let CreateToolhelp32Snapshot = get_create_tool_help32(kernel32_ptr);
+    let GetCurrentThreadId = get_get_current_thread_id(kernel32_ptr);
+    let GetCurrentProcessId = get_get_current_process_id(kernel32_ptr);
+    let CloseHandle = fetch_close_handle(kernelbase_ptr);
+    let Thread32First = get_thread_32_first(kernel32_ptr);
+    let OpenThread = get_open_thread(kernel32_ptr);
+    let SuspendThread = get_suspend_thread(kernel32_ptr);
+    let Thread32Next = get_thread_32_next(kernel32_ptr);
+
+    let pid = GetCurrentProcessId();
+    // Suspend all other threads except this one
+    let h = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, pid);
+    let current_thread = GetCurrentThreadId();
+    let mut te: THREADENTRY32 = core::mem::zeroed();
+    te.dwSize = core::mem::size_of_val(&te) as u32;
+    if Thread32First(h, &mut te as *mut _) != 0 {
+        loop {
+            if te.dwSize as usize
+                >= offset_of!(THREADENTRY32, th32OwnerProcessID)
+                    + core::mem::size_of_val(&te.th32OwnerProcessID)
+            {
+                if te.th32OwnerProcessID == pid {
+                    if current_thread != te.th32ThreadID {
+                        let thread_handle =
+                            OpenThread(THREAD_SUSPEND_RESUME, false, te.th32ThreadID);
+                        SuspendThread(thread_handle);
+                    }
+                }
+            }
+            if Thread32Next(h, &mut te as *mut _) == 0 {
+                break;
+            }
+            te.dwSize = core::mem::size_of_val(&te) as u32;
+        }
+    }
+
+    CloseHandle(h);
 }

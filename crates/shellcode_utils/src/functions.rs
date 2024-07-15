@@ -3,7 +3,11 @@ use core::{
     ffi::{c_char, c_int, c_void},
 };
 
-use windows_sys::Win32::Networking::WinSock::{QOS, SOCKET, WSABUF, WSADATA, WSAPROTOCOL_INFOA};
+use const_str::equal;
+use windows_sys::Win32::{
+    Networking::WinSock::{QOS, SOCKET, WSABUF, WSADATA, WSAPROTOCOL_INFOA},
+    System::Diagnostics::ToolHelp::THREADENTRY32,
+};
 
 use crate::{binds::*, resolve_func};
 
@@ -124,6 +128,21 @@ pub type GetLastErrorFn = unsafe extern "system" fn() -> u32;
 
 pub type inet_addrFn = unsafe extern "system" fn(cp: *const c_char) -> u32;
 
+pub type CreateToolhelp32SnapshotFn =
+    unsafe extern "system" fn(dwFlags: u32, th32ProcessId: u32) -> HANDLE;
+pub type GetCurrentProcessIdFn = unsafe extern "system" fn() -> u32;
+pub type GetCurrentThreadIdFn = unsafe extern "system" fn() -> u32;
+pub type OpenThreadFn = unsafe extern "system" fn(
+    dwDesiredAccess: u32,
+    bInheritHandle: bool,
+    dwThreadId: u32,
+) -> HANDLE;
+pub type SuspendThreadFn = unsafe extern "system" fn(hThread: HANDLE) -> u32;
+pub type Thread32NextFn =
+    unsafe extern "system" fn(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> c_int;
+pub type Thread32FirstFn =
+    unsafe extern "system" fn(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> c_int;
+
 // pub fn get_kernel32_test() -> PVOID {
 //     static KERNEL32: CachedPtr<PVOID> = CachedPtr::new(|| {
 //         let KERNEL32_STR: [u16; 13] = [75, 69, 82, 78, 69, 76, 51, 50, 46, 68, 76, 76, 0];
@@ -132,6 +151,40 @@ pub type inet_addrFn = unsafe extern "system" fn(cp: *const c_char) -> u32;
 
 //     *KERNEL32.0
 // }
+
+// NOTE: These are not stable across versions.
+pub const fn func_to_ordinal(func: &'static str) -> Option<u32> {
+    // We cannot match on strings in a const context, so we use const_str::equal!()
+
+    // ws2_32.dll
+    if equal!(func, "WSAConnect") {
+        Some(0x2f)
+    } else if equal!(func, "WSAStartup") {
+        Some(0x73)
+    } else if equal!(func, "inet_addr") {
+        Some(0xB)
+    } else if equal!(func, "WSASocketA") {
+        Some(0x78)
+    }
+    // KernelBase.dll
+    else if equal!(func, "VirtualAlloc") {
+        Some(0x749)
+    } else if equal!(func, "VirtualFree") {
+        Some(0x7F4)
+    } else if equal!(func, "VirtualProtect") {
+        Some(0x752)
+    } else if equal!(func, "ReadFile") {
+        Some(0x574)
+    } else if equal!(func, "WriteFile") {
+        Some(0x797)
+    } else if equal!(func, "CloseHandle") {
+        Some(0x90)
+    } else if equal!(func, "ExpandEnvironmentStringsA") {
+        Some(0x179)
+    } else {
+        None
+    }
+}
 
 pub fn get_kernelbase() -> Option<PVOID> {
     let KERNEL32_STR: [u16; 15] = [
@@ -157,6 +210,34 @@ pub fn get_kernel32(kernelbase_ptr: PVOID) -> Option<PVOID> {
             Some(kernel32_ptr)
         }
     })
+}
+
+pub fn get_get_current_process_id(kernelbase_ptr: PVOID) -> GetCurrentProcessIdFn {
+    resolve_func!(kernelbase_ptr, "GetCurrentProcessId")
+}
+
+pub fn get_create_tool_help32(kernelbase_ptr: PVOID) -> CreateToolhelp32SnapshotFn {
+    resolve_func!(kernelbase_ptr, "CreateToolhelp32Snapshot")
+}
+
+pub fn get_get_current_thread_id(kernelbase_ptr: PVOID) -> GetCurrentThreadIdFn {
+    resolve_func!(kernelbase_ptr, "GetCurrentThreadId")
+}
+
+pub fn get_open_thread(kernelbase_ptr: PVOID) -> OpenThreadFn {
+    resolve_func!(kernelbase_ptr, "OpenThread")
+}
+
+pub fn get_suspend_thread(kernelbase_ptr: PVOID) -> SuspendThreadFn {
+    resolve_func!(kernelbase_ptr, "SuspendThread")
+}
+
+pub fn get_thread_32_first(kernelbase_ptr: PVOID) -> Thread32FirstFn {
+    resolve_func!(kernelbase_ptr, "Thread32First")
+}
+
+pub fn get_thread_32_next(kernelbase_ptr: PVOID) -> Thread32NextFn {
+    resolve_func!(kernelbase_ptr, "Thread32Next")
 }
 
 pub fn get_ws2_32(kernelbase_ptr: PVOID) -> Option<PVOID> {
