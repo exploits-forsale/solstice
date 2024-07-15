@@ -1,0 +1,20 @@
+[package]
+name = "daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+async-trait = "0.1.81"
+russh = "0.43"
+russh-keys = "0.43.0"
+russh-sftp = "2.0.3"
+tokio = { version = "1.38", features = ["full"] }
+tracing = "0.1.40"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+    "local-time",
+    "time",
+    "env-filter",
+] }
+windows = { version = "0.58.0", features = ["Win32_Storage_FileSystem"] }

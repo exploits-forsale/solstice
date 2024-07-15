@@ -8,5 +8,6 @@
         "./crates/shellcode_gen/Cargo.toml",
         "./crates/test_program_rust/Cargo.toml",
         "./crates/server/Cargo.toml",
+        "./crates/daemon/Cargo.toml",
     ]
 }
