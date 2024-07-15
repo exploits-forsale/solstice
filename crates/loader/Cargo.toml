@@ -24,6 +24,10 @@ features = [
     "Win32_System_SystemServices",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_SystemInformation",
+    # For VirtualAlloc constants
+    "Win32_System_Memory",
+    # For LDR_DATA_TABLE_ENTRY
+    "Win32_System_WindowsProgramming",
 ]
 version = "0.52.0"
 default-features = false

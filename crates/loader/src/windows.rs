@@ -4,16 +4,6 @@ use core::ffi::{c_char, c_void};
 
 use windows_sys::Win32;
 
-pub type VIRTUAL_ALLOCATION_TYPE = u32;
-pub type PAGE_PROTECTION_FLAGS = u32;
-pub const MEM_COMMIT: VIRTUAL_ALLOCATION_TYPE = 0x1000;
-pub const PAGE_READWRITE: PAGE_PROTECTION_FLAGS = 0x04;
-pub const PAGE_EXECUTE_READ: PAGE_PROTECTION_FLAGS = 0x20;
-pub const PAGE_EXECUTE_READWRITE: PAGE_PROTECTION_FLAGS = 0x40;
-pub const IMAGE_DIRECTORY_ENTRY_EXCEPTION: usize = 3;
-pub const IMAGE_DIRECTORY_ENTRY_TLS: usize = 9;
-pub const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
-pub const IMAGE_DIRECTORY_ENTRY_IMPORT: usize = 1;
 pub const IMAGE_NT_SIGNATURE: u32 = 17744u32;
 pub const DLL_PROCESS_ATTACH: u32 = 1;
 
@@ -27,7 +17,10 @@ pub const IMAGE_ORDINAL_FLAG: usize = 0x80000000_00000000;
 
 #[cfg(not(feature = "shellcode_compat"))]
 pub(crate) mod ffi {
-    use windows_sys::Win32;
+    use windows_sys::Win32::{
+        self,
+        System::Memory::{PAGE_PROTECTION_FLAGS, VIRTUAL_ALLOCATION_TYPE},
+    };
 
     use super::*;
 

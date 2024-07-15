@@ -5,17 +5,26 @@ use windows_sys::Win32::{
     Foundation::UNICODE_STRING,
     System::{
         Diagnostics::Debug::{
-            IMAGE_DATA_DIRECTORY, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER,
+            IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT,
+            IMAGE_DIRECTORY_ENTRY_TLS, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64,
+            IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER,
         },
-        SystemServices::{IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_IMPORT_DESCRIPTOR},
+        Kernel::LIST_ENTRY,
+        Memory::{
+            PAGE_EXECUTE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY,
+            PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
+        },
+        SystemServices::{
+            IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_IMPORT_DESCRIPTOR, IMAGE_TLS_DIRECTORY64,
+        },
         Threading::PEB,
+        WindowsProgramming::LDR_DATA_TABLE_ENTRY,
     },
 };
 
 use crate::windows::{
     GetModuleHandleAFn, GetProcAddressFn, LoadLibraryAFn, VirtualAllocFn, VirtualProtectFn,
-    IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_NT_SIGNATURE,
-    IMAGE_ORDINAL_FLAG, PAGE_READWRITE,
+    IMAGE_NT_SIGNATURE, IMAGE_ORDINAL_FLAG,
 };
 
 /// Function to get the size of the headers
@@ -210,7 +219,7 @@ pub fn write_sections(
     ntheader: *const c_void,
     // A pointer to the DOS header of the PE file.
     dosheader: *const IMAGE_DOS_HEADER,
-) -> (*mut c_void, usize) {
+) {
     let number_of_sections = get_number_of_sections(ntheader);
     let nt_header_size = get_nt_header_size();
 
@@ -218,15 +227,10 @@ pub fn write_sections(
     let mut st_section_header =
         (baseptr as usize + e_lfanew + nt_header_size) as *const IMAGE_SECTION_HEADER;
 
-    let mut text_info = None;
     for _i in 0..number_of_sections {
         let header_ref: &IMAGE_SECTION_HEADER = unsafe { core::mem::transmute(st_section_header) };
         let dest = unsafe { baseptr.offset(header_ref.VirtualAddress as isize) };
         let len = header_ref.SizeOfRawData as usize;
-
-        if &header_ref.Name == b".text\0\0\0" {
-            text_info = Some((dest, len));
-        }
 
         // Get the section data
         let section_data = buffer
@@ -240,8 +244,73 @@ pub fn write_sections(
 
         st_section_header = unsafe { st_section_header.add(1) };
     }
+}
 
-    text_info.expect("did not encounter a .text section")
+/// Writes each section of the PE file to the allocated memory in the target process.
+///
+/// # Arguments
+///
+/// * `baseptr` - A pointer to the base address of the allocated memory in the target process.
+/// * `ntheader` - A pointer to the NT header of the PE file.
+/// * `dosheader` - A pointer to the DOS header of the PE file.
+pub fn fix_section_permissions(
+    // A handle to the process into which the PE file will be loaded.
+    // A pointer to the base address of the allocated memory in the target process.
+    baseptr: *mut c_void,
+    // A pointer to the NT header of the PE file.
+    ntheader: *const c_void,
+    // A pointer to the DOS header of the PE file.
+    dosheader: *const IMAGE_DOS_HEADER,
+    virtual_protect: VirtualProtectFn,
+) {
+    let number_of_sections = get_number_of_sections(ntheader);
+    let nt_header_size = get_nt_header_size();
+
+    let e_lfanew = (unsafe { *dosheader }).e_lfanew as usize;
+    let mut st_section_header =
+        (baseptr as usize + e_lfanew + nt_header_size) as *const IMAGE_SECTION_HEADER;
+
+    for _i in 0..number_of_sections {
+        let header_ref: &IMAGE_SECTION_HEADER = unsafe { core::mem::transmute(st_section_header) };
+        let dest = unsafe { baseptr.offset(header_ref.VirtualAddress as isize) };
+        let len = header_ref.SizeOfRawData as usize;
+
+        // Assign this section the proper permissions
+        let is_read = header_ref.Characteristics & IMAGE_SCN_MEM_READ != 0;
+        let is_write = header_ref.Characteristics & IMAGE_SCN_MEM_WRITE != 0;
+        let is_exec = header_ref.Characteristics & IMAGE_SCN_MEM_EXECUTE != 0;
+
+        let perms = match (is_read, is_write, is_exec) {
+            (false, false, false) => PAGE_NOACCESS,
+            (false, false, true) => PAGE_EXECUTE,
+            (true, false, false) => PAGE_READONLY,
+            (true, true, false) => PAGE_READWRITE,
+            (true, true, true) => PAGE_EXECUTE_READWRITE,
+            (false, true, true) => PAGE_EXECUTE_WRITECOPY,
+            (true, false, true) => PAGE_EXECUTE_READ,
+            (false, true, false) => {
+                unsafe {
+                    core::arch::asm!("int 3");
+                }
+                0
+            }
+        };
+
+        // Update this section's permissions
+        let mut old_protection: u32 = 0;
+        let succeeded = unsafe {
+            (virtual_protect)(
+                dest,                          // lpAddress,
+                len,                           // dwSize,
+                perms,                         // flNewProtect,
+                &mut old_protection as *mut _, // lpflOldProtect,
+            )
+        };
+
+        assert!(succeeded != 0);
+
+        st_section_header = unsafe { st_section_header.add(1) };
+    }
 }
 
 /// This function fixes the base relocations of the PE file in the allocated memory in the target process.
@@ -595,11 +664,102 @@ pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
     }
 }
 
+struct LDRP_TLS_DATA {
+    TlsLinks: LIST_ENTRY,
+    TlsDirectory: IMAGE_TLS_DIRECTORY64,
+}
+
+const LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES: [u8; 8] =
+    [0x48, 0x3B, 0xC2, 0x75, 0xF2, 0x33, 0xC0, 0xC3];
+
+type LdrpFindTlSEntryFn =
+    unsafe extern "system" fn(entry: *const LDR_DATA_TABLE_ENTRY) -> *mut LDRP_TLS_DATA;
+
 /// Patches the module list to change the old image name to the new image name.
 ///
 /// This is useful to ensure that a program that depends on `GetModuleHandle*`
 /// doesn't fail simply because its module is not found
-pub fn patch_module_list(image_name: Option<&[u16]>) {}
+pub unsafe fn patch_module_list(
+    image_name: Option<&[u16]>,
+    new_base_address: *mut c_void,
+    module_size: usize,
+    get_module_handle_fn: GetModuleHandleAFn,
+    this_tls_data: *const IMAGE_TLS_DIRECTORY64,
+    virtual_protect: VirtualProtectFn,
+    entrypoint: *const c_void,
+) -> u32 {
+    let current_module = get_module_handle_fn(core::ptr::null());
+
+    let teb = teb();
+    let peb = (*teb).ProcessEnvironmentBlock;
+    let ldr_data = (*peb).Ldr;
+    let module_list_head = &mut (*ldr_data).InMemoryOrderModuleList as *mut LIST_ENTRY;
+    let mut next = (*module_list_head).Flink;
+    while next != module_list_head {
+        // -1 because this is the second field in the LDR_DATA_TABLE_ENTRY struct.
+        // the first one is also a LIST_ENTRY
+        let module_info = (next.offset(-1)) as *mut LDR_DATA_TABLE_ENTRY;
+        if (*module_info).DllBase == current_module {
+            (*module_info).DllBase = new_base_address;
+            // EntryPoint
+            (*module_info).Reserved3[0] = entrypoint as *mut c_void;
+            // SizeOfImage
+            (*module_info).Reserved3[1] = module_size as *mut c_void;
+
+            let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
+            if let Some(ntdll_text) = get_module_section(ntdll_addr as *mut _, b".text") {
+                for window in ntdll_text.windows(LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES.len()) {
+                    if window == LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES {
+                        // Get this window's pointer and move backwards to find the start of the fn
+                        let mut ptr = window.as_ptr();
+                        loop {
+                            let behind = ptr.offset(-1);
+                            if *behind == 0xcc {
+                                break;
+                            }
+                            ptr = ptr.offset(-1);
+                        }
+
+                        let LdrpFindTlsEntry: LdrpFindTlSEntryFn = core::mem::transmute(ptr);
+
+                        let list_entry = LdrpFindTlsEntry(module_info);
+
+                        (*list_entry).TlsDirectory = *this_tls_data;
+                    }
+                }
+            }
+            break;
+        }
+        next = (*next).Flink;
+    }
+
+    let dosheader = get_dos_header(current_module);
+    let ntheader = get_nt_header(current_module, dosheader);
+
+    #[cfg(target_arch = "x86_64")]
+    let ntheader_ref: &mut IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
+    #[cfg(target_arch = "x86")]
+    let ntheader_ref: &mut IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
+
+    let real_module_tls_entry =
+        &mut ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
+
+    let real_module_tls_dir = current_module.offset(real_module_tls_entry.VirtualAddress as isize)
+        as *mut IMAGE_TLS_DIRECTORY64;
+
+    let mut old_perms = 0;
+    virtual_protect(
+        real_module_tls_dir as *mut _ as *const _,
+        core::mem::size_of::<IMAGE_TLS_DIRECTORY64>(),
+        PAGE_READWRITE,
+        &mut old_perms,
+    );
+
+    let idx = *((*real_module_tls_dir).AddressOfIndex as *const u32);
+    *real_module_tls_dir = *this_tls_data;
+
+    idx
+}
 
 /// Returns the Thread Environment Block (TEB)
 pub fn teb() -> *mut Win32::System::Threading::TEB {

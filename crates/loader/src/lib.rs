@@ -13,8 +13,9 @@ pub mod utils;
 pub mod windows;
 
 use pelib::{
-    fix_base_relocations, get_dos_header, get_headers_size, get_image_size, get_nt_header,
-    patch_kernelbase, patch_module_list, patch_peb, write_import_table, write_sections,
+    fix_base_relocations, fix_section_permissions, get_dos_header, get_headers_size,
+    get_image_size, get_nt_header, patch_kernelbase, patch_module_list, patch_peb, teb,
+    write_import_table, write_sections,
 };
 use utils::detect_platform;
 
@@ -26,13 +27,15 @@ use windows::ffi::{
 
 use windows::{
     CreateThreadFn, GetModuleHandleAFn, GetProcAddressFn, ImageTlsCallbackFn, LoadLibraryAFn,
-    RtlAddFunctionTableFn, VirtualAllocFn, VirtualProtectFn, DLL_PROCESS_ATTACH,
-    IMAGE_DIRECTORY_ENTRY_EXCEPTION, IMAGE_DIRECTORY_ENTRY_TLS, MEM_COMMIT, PAGE_EXECUTE_READ,
-    PAGE_READWRITE,
+    RtlAddFunctionTableFn, VirtualAllocFn, VirtualProtectFn,
 };
 use windows_sys::Win32::System::{
-    Diagnostics::Debug::{IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_RUNTIME_FUNCTION_ENTRY},
-    SystemServices::IMAGE_TLS_DIRECTORY64,
+    Diagnostics::Debug::{
+        IMAGE_DIRECTORY_ENTRY_EXCEPTION, IMAGE_DIRECTORY_ENTRY_TLS, IMAGE_NT_HEADERS32,
+        IMAGE_NT_HEADERS64, IMAGE_RUNTIME_FUNCTION_ENTRY,
+    },
+    Memory::{MEM_COMMIT, PAGE_READWRITE},
+    SystemServices::{DLL_PROCESS_ATTACH, DLL_THREAD_ATTACH, IMAGE_TLS_DIRECTORY64},
 };
 
 use core::{
@@ -137,23 +140,12 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
     );
 
     // Write each section to the allocated memory
-    let (text_address, text_len) = write_sections(
+    write_sections(
         baseptr,        // The base address of the image.
         context.buffer, // The buffer containing the image.
         ntheader,       // The NT header of the image.
         dosheader,      // The DOS header of the image.
     );
-
-    // Make the image executable
-    let mut old_protection: u32 = 0;
-    let succeeded = (context.fns.virtual_protect)(
-        text_address,                  // lpAddress,
-        text_len,                      // dwSize,
-        PAGE_EXECUTE_READ,             // flNewProtect,
-        &mut old_protection as *mut _, // lpflOldProtect,
-    );
-
-    assert!(succeeded != 0);
 
     // Write the import table to the allocated memory
     write_import_table(
@@ -169,6 +161,19 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
         fix_base_relocations(baseptr, ntheader);
     }
 
+    // Ensure each section has the proper permissions set
+    fix_section_permissions(baseptr, ntheader, dosheader, context.fns.virtual_protect);
+
+    // Patch data in kernelbase
+    patch_kernelbase(context.args.clone(), context.modules.kernelbase);
+
+    // Patch the PEB
+    patch_peb(
+        context.args,
+        context.image_name,
+        context.fns.virtual_protect,
+    );
+
     #[cfg(target_arch = "x86_64")]
     let entrypoint = (baseptr as usize
         + (*(ntheader as *const IMAGE_NT_HEADERS64))
@@ -180,34 +185,53 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
             .OptionalHeader
             .AddressOfEntryPoint as usize) as *const c_void;
 
-    let tls_directory = &ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+    let tls_directory =
+        &ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
+
+    // Grab the TLS data from the PE we're loading
+    let tls_data_addr =
+        baseptr.offset(tls_directory.VirtualAddress as isize) as *mut IMAGE_TLS_DIRECTORY64;
+
+    // TODO: Patch the module list
+    let tls_index = patch_module_list(
+        context.image_name,
+        baseptr,
+        imagesize,
+        context.fns.get_module_handle_fn,
+        tls_data_addr,
+        context.fns.virtual_protect,
+        entrypoint,
+    );
+
     if tls_directory.Size > 0 {
         // Grab the TLS data from the PE we're loading
         let tls_data_addr =
             baseptr.offset(tls_directory.VirtualAddress as isize) as *mut IMAGE_TLS_DIRECTORY64;
 
-        let tls_data: &IMAGE_TLS_DIRECTORY64 = unsafe { core::mem::transmute(tls_data_addr) };
+        let tls_data: &mut IMAGE_TLS_DIRECTORY64 = unsafe { core::mem::transmute(tls_data_addr) };
 
         // Grab the TLS start from the TEB
         let tls_start: *mut *mut c_void;
         unsafe { core::arch::asm!("mov {}, gs:[0x58]", out(reg) tls_start) }
 
-        let tls_index = unsafe { *(tls_data.AddressOfIndex as *const u32) };
-
         let tls_slot = tls_start.offset(tls_index as isize);
         let raw_data_size = tls_data.EndAddressOfRawData - tls_data.StartAddressOfRawData;
-        *tls_slot = (context.fns.virtual_alloc)(
+        let tls_data_addr = (context.fns.virtual_alloc)(
             ptr::null(),
-            raw_data_size as usize,
+            raw_data_size as usize, // + tls_data.SizeOfZeroFill as usize,
             MEM_COMMIT,
             PAGE_READWRITE,
         );
 
-        // if !tls_start.is_null() {
-        //     // Zero out this memory
-        //     let tls_slots: &mut [u64] = unsafe { core::slice::from_raw_parts_mut(tls_start, 64) };
-        //     tls_slots.iter_mut().for_each(|slot| *slot = 0);
-        // }
+        core::ptr::copy_nonoverlapping(
+            tls_data.StartAddressOfRawData as *const _,
+            tls_data_addr,
+            raw_data_size as usize,
+        );
+
+        // Update the TLS index
+        core::ptr::write(tls_data.AddressOfIndex as *mut u32, tls_index);
+        *tls_slot = tls_data_addr;
 
         let mut callbacks_addr = tls_data.AddressOfCallBacks as *const *const c_void;
         if !callbacks_addr.is_null() {
@@ -225,12 +249,15 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(rtl_add_function_table_fn) = context.fns.rtl_add_function_table_fn {
-            let exception_dir =
-                &ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+            let exception_dir = &ntheader_ref.OptionalHeader.DataDirectory
+                [IMAGE_DIRECTORY_ENTRY_EXCEPTION as usize];
 
             if exception_dir.Size != 0 {
+                let runtime_functions: *const IMAGE_RUNTIME_FUNCTION_ENTRY =
+                    core::mem::transmute(baseptr.offset(exception_dir.VirtualAddress as isize));
+
                 (rtl_add_function_table_fn)(
-                    baseptr.offset(exception_dir.VirtualAddress as isize),
+                    runtime_functions as *const _,
                     ((exception_dir.Size as usize)
                         / core::mem::size_of::<IMAGE_RUNTIME_FUNCTION_ENTRY>())
                         as u32,
@@ -240,21 +267,8 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
         }
     }
 
-    // Patch data in kernelbase
-    patch_kernelbase(context.args.clone(), context.modules.kernelbase);
-
-    // Patch the PEB
-    patch_peb(
-        context.args,
-        context.image_name,
-        context.fns.virtual_protect,
-    );
-
-    // TODO: Patch the module list
-    patch_module_list(context.image_name);
-
     // Create a new thread to execute the image
-    execute_image(entrypoint, context.fns.create_thread_fn);
+    execute_image(baseptr, entrypoint, context.fns.create_thread_fn);
 
     // Free the allocated memory of baseptr
     let _ = baseptr;
@@ -288,7 +302,7 @@ pub unsafe fn reflective_loader(buffer: &[u8], image_name: Option<&[u16]>, args:
             // TODO
             create_thread_fn: unsafe { core::mem::transmute(core::ptr::null::<CreateThreadFn>()) },
             get_module_handle_fn: GetModuleHandleA,
-            rtl_add_function_table_fn: Some(RtlAddFunctionTable),
+            rtl_add_function_table_fn: None,
         },
     };
     reflective_loader_impl(context);
@@ -319,7 +333,11 @@ pub unsafe fn reflective_loader(context: LoaderContext) {
 ///
 /// This function is unsafe because it directly interacts with the Windows API and modifies memory
 /// in the target process.
-unsafe fn execute_image(entrypoint: *const c_void, create_thread_fn: CreateThreadFn) {
+unsafe fn execute_image(
+    dll_base: *const c_void,
+    entrypoint: *const c_void,
+    create_thread_fn: CreateThreadFn,
+) {
     // if let Some(create_thread_fn) = create_thread_fn {
     //     unsafe {
     //         let handle = (create_thread_fn)(
@@ -336,8 +354,9 @@ unsafe fn execute_image(entrypoint: *const c_void, create_thread_fn: CreateThrea
     // } else {
     // Call the entry point of the image
     // Load the DLL
-    let func: extern "system" fn() -> u32 = core::mem::transmute(entrypoint);
-    func();
+    let func: extern "system" fn(*const c_void, u32, *const c_void) -> u32 =
+        core::mem::transmute(entrypoint);
+    func(dll_base, DLL_PROCESS_ATTACH, ptr::null());
     //}
 }
 
@@ -355,7 +374,7 @@ unsafe fn execute_tls_callback(baseptr: *const c_void, entrypoint: *const c_void
     // if let Some(create_thread_fn) = create_thread_fn {
     //     unsafe {
     //         let handle = (create_thread_fn)(
-    //             ptr::null(),     // default security attributes
+    //             ptr::null(),     // default security n
     //             0,               // default stack size
     //             entrypoint,      // thread start fn
     //             ptr::null(),     // args
@@ -368,6 +387,6 @@ unsafe fn execute_tls_callback(baseptr: *const c_void, entrypoint: *const c_void
     // } else {
     // Call the entry point of the image
     let func: ImageTlsCallbackFn = core::mem::transmute(entrypoint);
-    func(baseptr, DLL_PROCESS_ATTACH, ptr::null_mut());
+    func(baseptr, DLL_THREAD_ATTACH, ptr::null_mut());
     //}
 }
