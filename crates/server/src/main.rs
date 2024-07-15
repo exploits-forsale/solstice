@@ -63,9 +63,9 @@ fn main() -> std::io::Result<()> {
         let run = std::fs::read(&args.run)?;
         let mut stream = stream.unwrap();
 
-        info!("Sending stage1 len");
+        info!("Sending stage2 len");
         stream.write_all(&(stage2.len() as u32).to_be_bytes())?;
-        info!("Sending stage1");
+        info!("Sending stage2");
         stream.write_all(&stage2)?;
 
         info!("Sending run.exe len");
