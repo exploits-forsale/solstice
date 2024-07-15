@@ -14,6 +14,12 @@ version = "0.1.112"
 source = "git+https://github.com/rust-lang/compiler-builtins#0ccc1bfb962883e04bcce1bdc6a6a3a6ac2d2bbc"
 
 [[package]]
+name = "const-str"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3618cccc083bb987a415d85c02ca6c9994ea5b44731ec28b9ecf09658655fba9"
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -95,6 +101,7 @@ dependencies = [
 name = "shellcode_utils"
 version = "0.1.0"
 dependencies = [
+ "const-str",
  "num",
  "num-traits",
  "paste",

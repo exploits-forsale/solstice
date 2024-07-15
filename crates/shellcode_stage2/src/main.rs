@@ -14,6 +14,7 @@ use core::panic::PanicInfo;
 
 use alloc::vec::Vec;
 use allocators::{WinGlobalAlloc, WinVirtualAlloc};
+use num::Integer;
 use shellcode_utils::prelude::*;
 use solstice_loader::{DependentModules, LoaderContext, RuntimeFns};
 
@@ -25,9 +26,9 @@ fn panic(_info: &PanicInfo) -> ! {
 const STAGE3_ENV_PAYLOAD_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\run.exe"#, "\0");
 const STAGE3_ENV_ARGS_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\args.txt"#, "\0");
 
-const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x200000000_00000001;
-const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x200000000_00000002;
-const STAGE2_ERROR_INVALID_UTF8: u64 = 0x200000000_00000003;
+const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x20000001;
+const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x20000002;
+const STAGE2_ERROR_INVALID_UTF8: u64 = 0x20000003;
 
 #[no_mangle]
 pub extern "C" fn main() -> u64 {
@@ -42,7 +43,7 @@ pub extern "C" fn main() -> u64 {
     // }
 
     let kernelbase_ptr = get_kernelbase().unwrap();
-    //let kernel32_ptr = get_kernel32(kernelbase_ptr);
+    let kernel32_ptr = get_kernel32(kernelbase_ptr);
 
     #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
@@ -76,7 +77,7 @@ pub extern "C" fn main() -> u64 {
     let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
     // Kernel32 imports
-    let RtlAddFunctionTable = fetch_rtl_add_fn_table(kernelbase_ptr); //kernel32_ptr.clone().map(fetch_rtl_add_fn_table);
+    let RtlAddFunctionTable = None; //kernel32_ptr.clone().map(fetch_rtl_add_fn_table);
 
     let allocator = WinGlobalAlloc::new(kernelbase_ptr);
 
@@ -217,9 +218,8 @@ pub extern "C" fn main() -> u64 {
                 raw_args.len(),
             );
 
-            args_with_image_name.set_len(args_full_len);
+            args_with_image_name.set_len(args_full_len - 1);
 
-            // Add a null terminator
             args_with_image_name.push(0);
 
             let utf8_args = match core::str::from_utf8(&args_with_image_name) {
@@ -245,6 +245,11 @@ pub extern "C" fn main() -> u64 {
         args
     });
 
+    // Pause all other threads
+    unsafe {
+        //shellcode_utils::suspend_threads(kernel32_ptr.unwrap(), kernelbase_ptr);
+    }
+
     debug_print!("Attempting to load PE");
     let context = LoaderContext {
         buffer: &pe_data,
@@ -261,7 +266,7 @@ pub extern "C" fn main() -> u64 {
             // TODO
             create_thread_fn: CreateThread,
             get_module_handle_fn: GetModuleHandleA,
-            rtl_add_function_table_fn: None,
+            rtl_add_function_table_fn: RtlAddFunctionTable,
         },
     };
     unsafe {
