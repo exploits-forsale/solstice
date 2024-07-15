@@ -20,8 +20,8 @@ fn panic(_info: &PanicInfo) -> ! {
 type Stage2Fn = fn() -> u64;
 
 const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\stage2.bin"#, "\0");
-const STAGE1_ERROR_FILE_OPEN_FAILED: u64 = 0x100000000_00000001;
-const STAGE1_ERROR_FILE_READ_FAILED: u64 = 0x100000000_00000002;
+const STAGE1_ERROR_FILE_OPEN_FAILED: u64 = 0x10000001;
+const STAGE1_ERROR_FILE_READ_FAILED: u64 = 0x10000002;
 
 #[used]
 #[no_mangle]
