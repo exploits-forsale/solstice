@@ -33,12 +33,13 @@ fn main() {
         .expect("failed to write to output");
 
         for arg in std::env::args() {
-            writeln!(&mut file, "{:p} {}", arg.as_ptr(), arg).expect("failed to write to outpu");
+            writeln!(&mut file, "{:p} {}", arg.as_ptr(), arg).expect("failed to write to output");
         }
         drop(file);
 
         #[cfg(feature = "network")]
         {
+            let file_path = PathBuf::from(format!("{}\\..\\LocalState\\hello.txt", app_data));
             if file_path.exists() {
                 let file_data = std::fs::read(&file_path).unwrap();
                 // Talk to the remote server
