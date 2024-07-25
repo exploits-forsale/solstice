@@ -212,35 +212,54 @@ pub fn get_kernel32(kernelbase_ptr: PVOID) -> Option<PVOID> {
     })
 }
 
-pub fn get_get_current_process_id(kernelbase_ptr: PVOID) -> GetCurrentProcessIdFn {
+pub fn get_kernel32_legacy(kernelbase_ptr: PVOID) -> Option<PVOID> {
+    let KERNEL32_STR: [u16; 19] = [
+        'k' as u16, 'e' as u16, 'r' as u16, 'n' as u16, 'e' as u16, 'l' as u16, '3' as u16,
+        '2' as u16, 'l' as u16, 'e' as u16, 'g' as u16, 'a' as u16, 'c' as u16, 'y' as u16,
+        '.' as u16, 'D' as u16, 'L' as u16, 'L' as u16, 0,
+    ];
+
+    crate::get_module_by_name(KERNEL32_STR.as_ptr()).or_else(|| {
+        let kernel32 = concat!("kernel32legacy.dll", "\0");
+        let kernel32_ptr =
+            unsafe { (fetch_load_library(kernelbase_ptr))(kernel32.as_ptr() as *const _) };
+        if kernel32_ptr.is_null() {
+            None
+        } else {
+            Some(kernel32_ptr)
+        }
+    })
+}
+
+pub fn fetch_get_current_process_id(kernelbase_ptr: PVOID) -> GetCurrentProcessIdFn {
     resolve_func!(kernelbase_ptr, "GetCurrentProcessId")
 }
 
-pub fn get_create_tool_help32(kernelbase_ptr: PVOID) -> CreateToolhelp32SnapshotFn {
+pub fn fetch_create_tool_help32(kernelbase_ptr: PVOID) -> CreateToolhelp32SnapshotFn {
     resolve_func!(kernelbase_ptr, "CreateToolhelp32Snapshot")
 }
 
-pub fn get_get_current_thread_id(kernelbase_ptr: PVOID) -> GetCurrentThreadIdFn {
+pub fn fetch_get_current_thread_id(kernelbase_ptr: PVOID) -> GetCurrentThreadIdFn {
     resolve_func!(kernelbase_ptr, "GetCurrentThreadId")
 }
 
-pub fn get_open_thread(kernelbase_ptr: PVOID) -> OpenThreadFn {
+pub fn fetch_open_thread(kernelbase_ptr: PVOID) -> OpenThreadFn {
     resolve_func!(kernelbase_ptr, "OpenThread")
 }
 
-pub fn get_suspend_thread(kernelbase_ptr: PVOID) -> SuspendThreadFn {
+pub fn fetch_suspend_thread(kernelbase_ptr: PVOID) -> SuspendThreadFn {
     resolve_func!(kernelbase_ptr, "SuspendThread")
 }
 
-pub fn get_thread_32_first(kernelbase_ptr: PVOID) -> Thread32FirstFn {
+pub fn fetch_thread_32_first(kernelbase_ptr: PVOID) -> Thread32FirstFn {
     resolve_func!(kernelbase_ptr, "Thread32First")
 }
 
-pub fn get_thread_32_next(kernelbase_ptr: PVOID) -> Thread32NextFn {
+pub fn fetch_thread_32_next(kernelbase_ptr: PVOID) -> Thread32NextFn {
     resolve_func!(kernelbase_ptr, "Thread32Next")
 }
 
-pub fn get_ws2_32(kernelbase_ptr: PVOID) -> Option<PVOID> {
+pub fn fetch_ws2_32(kernelbase_ptr: PVOID) -> Option<PVOID> {
     let WS2_32_WSTR: [u16; 11] = [
         'W' as u16, 'S' as u16, '2' as u16, '_' as u16, '3' as u16, '2' as u16, '.' as u16,
         'd' as u16, 'l' as u16, 'l' as u16, 0,

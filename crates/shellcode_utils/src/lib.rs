@@ -25,9 +25,9 @@ use core::arch::asm;
 use core::ptr::null_mut;
 use core::{alloc::Allocator, mem::offset_of};
 use functions::{
-    fetch_close_handle, get_create_tool_help32, get_get_current_process_id,
-    get_get_current_thread_id, get_open_thread, get_suspend_thread, get_thread_32_first,
-    get_thread_32_next, CreateToolhelp32SnapshotFn, GetCurrentThreadIdFn,
+    fetch_close_handle, fetch_create_tool_help32, fetch_get_current_process_id,
+    fetch_get_current_thread_id, fetch_open_thread, fetch_suspend_thread, fetch_thread_32_first,
+    fetch_thread_32_next, CreateToolhelp32SnapshotFn, GetCurrentThreadIdFn,
 };
 use paste::paste;
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{TH32CS_SNAPTHREAD, THREADENTRY32};
@@ -265,14 +265,17 @@ fn str_to_i8(s: &str) -> *const i8 {
 }
 
 pub unsafe fn suspend_threads(kernel32_ptr: PVOID, kernelbase_ptr: PVOID) {
-    let CreateToolhelp32Snapshot = get_create_tool_help32(kernel32_ptr);
-    let GetCurrentThreadId = get_get_current_thread_id(kernel32_ptr);
-    let GetCurrentProcessId = get_get_current_process_id(kernel32_ptr);
+    // kernel32legacy.dll on xbox
+    let CreateToolhelp32Snapshot = fetch_create_tool_help32(kernel32_ptr);
+    let Thread32Next = fetch_thread_32_next(kernel32_ptr);
+    let Thread32First = fetch_thread_32_first(kernel32_ptr);
+
+    // kernelbase.dll on xbox
+    let GetCurrentThreadId = fetch_get_current_thread_id(kernelbase_ptr);
+    let GetCurrentProcessId = fetch_get_current_process_id(kernelbase_ptr);
+    let OpenThread = fetch_open_thread(kernelbase_ptr);
+    let SuspendThread = fetch_suspend_thread(kernelbase_ptr);
     let CloseHandle = fetch_close_handle(kernelbase_ptr);
-    let Thread32First = get_thread_32_first(kernel32_ptr);
-    let OpenThread = get_open_thread(kernel32_ptr);
-    let SuspendThread = get_suspend_thread(kernel32_ptr);
-    let Thread32Next = get_thread_32_next(kernel32_ptr);
 
     let pid = GetCurrentProcessId();
     // Suspend all other threads except this one

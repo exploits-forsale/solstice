@@ -43,7 +43,7 @@ pub extern "C" fn main() -> u64 {
     // }
 
     let kernelbase_ptr = get_kernelbase().unwrap();
-    let kernel32_ptr = get_kernel32(kernelbase_ptr);
+    let kernel32_ptr = get_kernel32_legacy(kernelbase_ptr).or_else(|| get_kernel32(kernelbase_ptr));
 
     #[cfg(feature = "debug")]
     let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
@@ -247,7 +247,7 @@ pub extern "C" fn main() -> u64 {
 
     // Pause all other threads
     unsafe {
-        //shellcode_utils::suspend_threads(kernel32_ptr.unwrap(), kernelbase_ptr);
+        shellcode_utils::suspend_threads(kernel32_ptr.unwrap(), kernelbase_ptr);
     }
 
     debug_print!("Attempting to load PE");
