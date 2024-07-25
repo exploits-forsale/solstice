@@ -418,7 +418,10 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 }
 
-pub async fn start_sftp_server() {
+use std::io::Write;
+pub async fn start_sftp_server() -> std::io::Result<()> {
+    debug!("in start_sftp_server");
+
     let config = russh::server::Config {
         auth_rejection_time: Duration::from_secs(3),
         auth_rejection_time_initial: Some(Duration::from_secs(0)),
@@ -428,17 +431,13 @@ pub async fn start_sftp_server() {
 
     let mut server = Server;
 
+    let host = "0.0.0.0";
+    let port = 50010;
+    debug!("about to listen on {host}:{port}");
+
     server
-        .run_on_address(
-            Arc::new(config),
-            (
-                "0.0.0.0",
-                std::env::var("PORT")
-                    .unwrap_or("6666".to_string())
-                    .parse()
-                    .unwrap(),
-            ),
-        )
-        .await
-        .unwrap();
+        .run_on_address(Arc::new(config), (host, port))
+        .await?;
+
+    Ok(())
 }
