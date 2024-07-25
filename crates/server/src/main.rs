@@ -26,14 +26,15 @@ fn start_file_listener() {
     info!("File listener listening...");
 
     for stream in listener.incoming() {
-        info!("File listener connection established!");
+        std::thread::spawn(move || {
+            info!("File listener connection established!");
 
-        let mut stream = stream.unwrap();
-        let mut file_data = String::new();
-        let _ = stream.read_to_string(&mut file_data);
+            let mut stream = stream.unwrap();
+            let mut file_data = String::new();
+            let _ = stream.read_to_string(&mut file_data);
 
-        println!("{}", file_data);
-
+            println!("{}", file_data);
+        });
         info!("Waiting for new file connection...")
     }
 }
