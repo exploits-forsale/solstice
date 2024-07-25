@@ -189,8 +189,11 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
         &ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
 
     // Grab the TLS data from the PE we're loading
-    let tls_data_addr =
-        baseptr.offset(tls_directory.VirtualAddress as isize) as *mut IMAGE_TLS_DIRECTORY64;
+    let tls_data_addr = if tls_directory.Size == 0 {
+        core::ptr::null()
+    } else {
+        baseptr.offset(tls_directory.VirtualAddress as isize) as *mut IMAGE_TLS_DIRECTORY64
+    };
 
     // TODO: Patch the module list
     let tls_index = patch_module_list(

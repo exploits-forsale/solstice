@@ -706,25 +706,27 @@ pub unsafe fn patch_module_list(
             // SizeOfImage
             (*module_info).Reserved3[1] = module_size as *mut c_void;
 
-            let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
-            if let Some(ntdll_text) = get_module_section(ntdll_addr as *mut _, b".text") {
-                for window in ntdll_text.windows(LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES.len()) {
-                    if window == LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES {
-                        // Get this window's pointer and move backwards to find the start of the fn
-                        let mut ptr = window.as_ptr();
-                        loop {
-                            let behind = ptr.offset(-1);
-                            if *behind == 0xcc {
-                                break;
+            if !this_tls_data.is_null() {
+                let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
+                if let Some(ntdll_text) = get_module_section(ntdll_addr as *mut _, b".text") {
+                    for window in ntdll_text.windows(LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES.len()) {
+                        if window == LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES {
+                            // Get this window's pointer and move backwards to find the start of the fn
+                            let mut ptr = window.as_ptr();
+                            loop {
+                                let behind = ptr.offset(-1);
+                                if *behind == 0xcc {
+                                    break;
+                                }
+                                ptr = ptr.offset(-1);
                             }
-                            ptr = ptr.offset(-1);
+
+                            let LdrpFindTlsEntry: LdrpFindTlSEntryFn = core::mem::transmute(ptr);
+
+                            let list_entry = LdrpFindTlsEntry(module_info);
+
+                            (*list_entry).TlsDirectory = *this_tls_data;
                         }
-
-                        let LdrpFindTlsEntry: LdrpFindTlSEntryFn = core::mem::transmute(ptr);
-
-                        let list_entry = LdrpFindTlsEntry(module_info);
-
-                        (*list_entry).TlsDirectory = *this_tls_data;
                     }
                 }
             }
@@ -733,32 +735,37 @@ pub unsafe fn patch_module_list(
         next = (*next).Flink;
     }
 
-    let dosheader = get_dos_header(current_module);
-    let ntheader = get_nt_header(current_module, dosheader);
+    if !this_tls_data.is_null() {
+        let dosheader = get_dos_header(current_module);
+        let ntheader = get_nt_header(current_module, dosheader);
 
-    #[cfg(target_arch = "x86_64")]
-    let ntheader_ref: &mut IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
-    #[cfg(target_arch = "x86")]
-    let ntheader_ref: &mut IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
+        #[cfg(target_arch = "x86_64")]
+        let ntheader_ref: &mut IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
+        #[cfg(target_arch = "x86")]
+        let ntheader_ref: &mut IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
 
-    let real_module_tls_entry =
-        &mut ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
+        let real_module_tls_entry =
+            &mut ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
 
-    let real_module_tls_dir = current_module.offset(real_module_tls_entry.VirtualAddress as isize)
-        as *mut IMAGE_TLS_DIRECTORY64;
+        let real_module_tls_dir = current_module
+            .offset(real_module_tls_entry.VirtualAddress as isize)
+            as *mut IMAGE_TLS_DIRECTORY64;
 
-    let mut old_perms = 0;
-    virtual_protect(
-        real_module_tls_dir as *mut _ as *const _,
-        core::mem::size_of::<IMAGE_TLS_DIRECTORY64>(),
-        PAGE_READWRITE,
-        &mut old_perms,
-    );
+        let mut old_perms = 0;
+        virtual_protect(
+            real_module_tls_dir as *mut _ as *const _,
+            core::mem::size_of::<IMAGE_TLS_DIRECTORY64>(),
+            PAGE_READWRITE,
+            &mut old_perms,
+        );
 
-    let idx = *((*real_module_tls_dir).AddressOfIndex as *const u32);
-    *real_module_tls_dir = *this_tls_data;
+        let idx = *((*real_module_tls_dir).AddressOfIndex as *const u32);
+        *real_module_tls_dir = *this_tls_data;
 
-    idx
+        idx
+    } else {
+        0
+    }
 }
 
 /// Returns the Thread Environment Block (TEB)
