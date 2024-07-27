@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use russh_sftp::protocol::Stat;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeek;
@@ -31,6 +32,7 @@ use russh_sftp::protocol::StatusCode;
 use russh_sftp::protocol::Version;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncSeekExt;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::debug;
 use tracing::error;
@@ -117,11 +119,22 @@ impl russh::server::Handler for SshSession {
     }
 }
 
+struct InternalHandle {
+    path: PathBuf,
+    file: Option<tokio::fs::File>,
+}
+
+impl InternalHandle {
+    fn file(&mut self) -> Result<&mut tokio::fs::File, StatusCode> {
+        self.file.as_mut().ok_or(StatusCode::Failure)
+    }
+}
+
 #[derive(Default)]
 struct SftpSession {
     version: Option<u32>,
     root_dir_read_done: bool,
-    handles: HashMap<String, tokio::fs::File>,
+    handles: HashMap<String, InternalHandle>,
     cur_dir: Option<PathBuf>,
 }
 
@@ -130,6 +143,7 @@ fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
 
     // Only accept full paths
     if !parsed_path.has_root() {
+        debug!("returning None");
         return None;
     }
 
@@ -141,6 +155,9 @@ fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
         for component in split {
             translated_path.push(component);
         }
+
+        translated_path = translated_path.canonicalize().unwrap_or(translated_path);
+        debug!("returning translated path: {:?}", translated_path);
 
         Some(translated_path)
     } else {
@@ -171,7 +188,9 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Version::new())
     }
 
-    async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
+    async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
+        let _ = self.handles.remove(&handle);
+
         Ok(Status {
             id,
             status_code: StatusCode::Ok,
@@ -220,21 +239,37 @@ impl russh_sftp::server::Handler for SftpSession {
                 Some(path) if path.exists() => {
                     let files = path
                         .read_dir()
-                        .map_err(|_e| {
+                        .context("read_dir")
+                        .map_err(|e| {
+                            error!("{:?}", e);
                             // TODO: Proper error code
                             StatusCode::PermissionDenied
                         })?
                         .map(|file| {
-                            let file = file.map_err(|_e| StatusCode::PermissionDenied)?;
+                            let file = file.context("file dir_entry").map_err(|e| {
+                                error!("{:?}", e);
+                                StatusCode::PermissionDenied
+                            })?;
                             let name = file.file_name().to_string_lossy().into_owned();
-                            let metadata =
-                                file.metadata().map_err(|_e| StatusCode::PermissionDenied)?;
 
-                            Ok(File {
-                                filename: name.clone(),
-                                longname: name,
-                                attrs: (&metadata).into(),
-                            })
+                            if let Ok(metadata) = file
+                                .metadata()
+                                .context("readdir metadata")
+                                .map_err(|e| error!("{:?}", e))
+                            {
+                                Ok(File {
+                                    filename: name.clone(),
+                                    longname: name,
+                                    attrs: (&metadata).into(),
+                                })
+                            } else {
+                                // TODO
+                                Ok(File {
+                                    filename: name.clone(),
+                                    longname: name,
+                                    attrs: FileAttributes::default(),
+                                })
+                            }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
@@ -297,7 +332,13 @@ impl russh_sftp::server::Handler for SftpSession {
                 .await
                 .map_err(|_e| StatusCode::NoSuchFile)?;
 
-            self.handles.insert(filename.clone(), file);
+            self.handles.insert(
+                filename.clone(),
+                InternalHandle {
+                    path,
+                    file: Some(file),
+                },
+            );
 
             Ok(Handle {
                 id,
@@ -317,25 +358,28 @@ impl russh_sftp::server::Handler for SftpSession {
     ) -> Result<russh_sftp::protocol::Data, Self::Error> {
         debug!("read: {id} {handle} {offset:#X} {len:#X}");
 
-        match self.handles.get_mut(&handle) {
-            Some(file) => match file.seek(SeekFrom::Start(offset)).await {
-                Ok(_) => {
-                    let mut data = vec![0u8; len as usize];
-                    match file.read(data.as_mut_slice()).await.context("reading file") {
-                        Ok(read) => {
-                            data.truncate(read);
+        let file = self
+            .handles
+            .get_mut(&handle)
+            .ok_or(StatusCode::BadMessage)
+            .map(InternalHandle::file)??;
 
-                            Ok(russh_sftp::protocol::Data { id, data })
-                        }
-                        Err(e) => {
-                            error!("{:?}", e);
-                            Err(StatusCode::Failure)
-                        }
+        match file.seek(SeekFrom::Start(offset)).await {
+            Ok(_) => {
+                let mut data = vec![0u8; len as usize];
+                match file.read(data.as_mut_slice()).await.context("reading file") {
+                    Ok(read) => {
+                        data.truncate(read);
+
+                        Ok(russh_sftp::protocol::Data { id, data })
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        Err(StatusCode::Failure)
                     }
                 }
-                Err(_) => Err(StatusCode::Failure),
-            },
-            None => Err(StatusCode::BadMessage),
+            }
+            Err(_) => Err(StatusCode::Failure),
         }
     }
 
@@ -346,7 +390,28 @@ impl russh_sftp::server::Handler for SftpSession {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
+        let file = self
+            .handles
+            .get_mut(&handle)
+            .ok_or(StatusCode::BadMessage)
+            .map(InternalHandle::file)??;
+
+        match file.seek(SeekFrom::Start(offset)).await {
+            Ok(_) => {
+                match file
+                    .write_all(data.as_slice())
+                    .await
+                    .context("writing file")
+                {
+                    Ok(_) => Err(StatusCode::Ok),
+                    Err(e) => {
+                        error!("{:?}", e);
+                        Err(StatusCode::Failure)
+                    }
+                }
+            }
+            Err(_) => Err(StatusCode::Failure),
+        }
     }
 
     async fn lstat(
@@ -400,6 +465,7 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        debug!("setstat: {id} {path} {attrs:?}");
         Err(self.unimplemented())
     }
 
@@ -409,11 +475,48 @@ impl russh_sftp::server::Handler for SftpSession {
         handle: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        debug!("fsetstat: {id} {handle} {attrs:?}");
         Err(self.unimplemented())
     }
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
+        debug!("remove: {id} {filename}");
+
+        if let Some(path) = unix_like_path_to_windows_path(&filename) {
+            match path.parent() {
+                Some(path)
+                    if path
+                        .file_name()
+                        .expect("path has no filename?")
+                        .to_string_lossy()
+                        == "/" =>
+                {
+                    Err(StatusCode::PermissionDenied)
+                }
+                Some(path) if path.is_dir() => {
+                    if let Err(e) = tokio::fs::remove_dir_all(path)
+                        .await
+                        .context("removing dir")
+                    {
+                        error!("{:?}", e);
+                        Err(StatusCode::Failure)
+                    } else {
+                        Err(StatusCode::Ok)
+                    }
+                }
+                Some(path) => {
+                    if let Err(e) = tokio::fs::remove_file(path).await.context("removing file") {
+                        error!("{:?}", e);
+                        Err(StatusCode::Failure)
+                    } else {
+                        Err(StatusCode::Ok)
+                    }
+                }
+                None => Err(StatusCode::NoSuchFile),
+            }
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn mkdir(
@@ -422,10 +525,12 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        debug!("mkdir: {id} {path}");
         Err(self.unimplemented())
     }
 
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
+        debug!("rmdir: {id} {path}");
         Err(self.unimplemented())
     }
 
@@ -465,10 +570,12 @@ impl russh_sftp::server::Handler for SftpSession {
         oldpath: String,
         newpath: String,
     ) -> Result<Status, Self::Error> {
+        debug!("rename: {id} from= {oldpath} to= {newpath}");
         Err(self.unimplemented())
     }
 
     async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
+        debug!("readlink: {id} {path}");
         Err(self.unimplemented())
     }
 
@@ -487,6 +594,7 @@ impl russh_sftp::server::Handler for SftpSession {
         request: String,
         data: Vec<u8>,
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
+        debug!("extended: {id} {request}");
         Err(self.unimplemented())
     }
 }
