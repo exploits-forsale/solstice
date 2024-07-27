@@ -1,18 +1,40 @@
 use std::collections::HashMap;
+use std::io::SeekFrom;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeek;
+
 use async_trait::async_trait;
-use russh::server::{Auth, Msg, Server as _, Session};
-use russh::{Channel, ChannelId};
+use russh::server::Auth;
+use russh::server::Msg;
+use russh::server::Server as _;
+use russh::server::Session;
+use russh::Channel;
+use russh::ChannelId;
 use russh_keys::key::KeyPair;
-use russh_sftp::protocol::{
-    Attrs, File, FileAttributes, FileMode, Handle, Name, Status, StatusCode, Version,
-};
+use russh_sftp::protocol::Attrs;
+use russh_sftp::protocol::File;
+use russh_sftp::protocol::FileAttributes;
+use russh_sftp::protocol::FileMode;
+use russh_sftp::protocol::Handle;
+use russh_sftp::protocol::Name;
+use russh_sftp::protocol::OpenFlags;
+use russh_sftp::protocol::Status;
+use russh_sftp::protocol::StatusCode;
+use russh_sftp::protocol::Version;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncSeekExt;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::debug;
+use tracing::error;
+use tracing::info;
 
 #[derive(Clone)]
 struct Server;
@@ -99,6 +121,8 @@ impl russh::server::Handler for SshSession {
 struct SftpSession {
     version: Option<u32>,
     root_dir_read_done: bool,
+    handles: HashMap<String, tokio::fs::File>,
+    cur_dir: Option<PathBuf>,
 }
 
 fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
@@ -117,8 +141,6 @@ fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
         for component in split {
             translated_path.push(component);
         }
-
-        debug!("returning windows path: {:?}", translated_path);
 
         Some(translated_path)
     } else {
@@ -160,11 +182,14 @@ impl russh_sftp::server::Handler for SftpSession {
 
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         info!("opendir: {}", path);
+        self.cur_dir = unix_like_path_to_windows_path(path.as_str());
         Ok(Handle { id, handle: path })
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         info!("readdir handle: {}", handle);
+        debug!("self.root_dir_read_done = {}", self.root_dir_read_done);
+
         if !self.root_dir_read_done {
             self.root_dir_read_done = true;
 
@@ -257,7 +282,30 @@ impl russh_sftp::server::Handler for SftpSession {
         attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
         debug!("open: {id} {filename} {pflags:?} {attrs:?}");
-        Err(self.unimplemented())
+        if let Some(path) = unix_like_path_to_windows_path(&filename) {
+            if !path.exists() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            let file = OpenOptions::new()
+                .read(pflags.contains(OpenFlags::READ))
+                .write(pflags.contains(OpenFlags::WRITE))
+                .truncate(pflags.contains(OpenFlags::TRUNCATE))
+                .create(pflags.contains(OpenFlags::CREATE))
+                .append(pflags.contains(OpenFlags::APPEND))
+                .open(&path)
+                .await
+                .map_err(|_e| StatusCode::NoSuchFile)?;
+
+            self.handles.insert(filename.clone(), file);
+
+            Ok(Handle {
+                id,
+                handle: filename,
+            })
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn read(
@@ -268,7 +316,27 @@ impl russh_sftp::server::Handler for SftpSession {
         len: u32,
     ) -> Result<russh_sftp::protocol::Data, Self::Error> {
         debug!("read: {id} {handle} {offset:#X} {len:#X}");
-        Err(self.unimplemented())
+
+        match self.handles.get_mut(&handle) {
+            Some(file) => match file.seek(SeekFrom::Start(offset)).await {
+                Ok(_) => {
+                    let mut data = vec![0u8; len as usize];
+                    match file.read(data.as_mut_slice()).await.context("reading file") {
+                        Ok(read) => {
+                            data.truncate(read);
+
+                            Ok(russh_sftp::protocol::Data { id, data })
+                        }
+                        Err(e) => {
+                            error!("{:?}", e);
+                            Err(StatusCode::Failure)
+                        }
+                    }
+                }
+                Err(_) => Err(StatusCode::Failure),
+            },
+            None => Err(StatusCode::BadMessage),
+        }
     }
 
     async fn write(
@@ -291,10 +359,12 @@ impl russh_sftp::server::Handler for SftpSession {
         let win_path = unix_like_path_to_windows_path(&path);
         // Only accept full paths
         if win_path.is_none() {
+            dbg!("lstat returning no such file");
             return Err(StatusCode::NoSuchFile);
         }
 
         if path == "/" {
+            debug!("returning root");
             // They're statting the virtual root dir
             return Ok(Attrs {
                 id,
@@ -303,12 +373,15 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         let win_path = win_path.unwrap();
-        match win_path.metadata() {
+        match win_path.metadata().context("lstat metadata") {
             Ok(meta) => Ok(Attrs {
                 id,
                 attrs: (&meta).into(),
             }),
-            Err(_) => Err(StatusCode::NoSuchFile),
+            Err(e) => {
+                error!("{:?}", e);
+                Err(StatusCode::NoSuchFile)
+            }
         }
     }
 
@@ -418,7 +491,8 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 }
 
-use std::io::Write;
+pub(crate) const SFTP_LISTEN_PORT: u16 = 22;
+
 pub async fn start_sftp_server() -> std::io::Result<()> {
     debug!("in start_sftp_server");
 
@@ -432,11 +506,10 @@ pub async fn start_sftp_server() -> std::io::Result<()> {
     let mut server = Server;
 
     let host = "0.0.0.0";
-    let port = 50010;
-    debug!("about to listen on {host}:{port}");
+    debug!("about to listen on {host}:{SFTP_LISTEN_PORT}");
 
     server
-        .run_on_address(Arc::new(config), (host, port))
+        .run_on_address(Arc::new(config), (host, SFTP_LISTEN_PORT))
         .await?;
 
     Ok(())
