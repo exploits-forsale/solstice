@@ -364,13 +364,25 @@ impl russh_sftp::server::Handler for SftpSession {
             .ok_or(StatusCode::BadMessage)
             .map(InternalHandle::file)??;
 
+        let eof = file
+            .seek(SeekFrom::End(0))
+            .await
+            .context("EOF seek")
+            .map_err(|e| {
+                error!("{:?}", e);
+                StatusCode::Failure
+            })?;
+
+        if offset >= eof {
+            return Err(StatusCode::Eof);
+        }
+
         match file.seek(SeekFrom::Start(offset)).await {
             Ok(_) => {
                 let mut data = vec![0u8; len as usize];
                 match file.read(data.as_mut_slice()).await.context("reading file") {
                     Ok(read) => {
                         data.truncate(read);
-
                         Ok(russh_sftp::protocol::Data { id, data })
                     }
                     Err(e) => {
