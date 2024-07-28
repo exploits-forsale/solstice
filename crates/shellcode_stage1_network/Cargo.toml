@@ -9,6 +9,10 @@ edition = "2018"
 [dependencies]
 shellcode_utils = { path = "../shellcode_utils" }
 
+[dependencies.compiler_builtins]
+git = "https://github.com/rust-lang/compiler-builtins"
+features = ["mem"]
+
 [dependencies.windows-sys]
 version = "0.52.0"
 default-features = false
