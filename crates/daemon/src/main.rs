@@ -1,7 +1,6 @@
 use anyhow::Context;
 use firewall::allow_port_through_firewall;
 use firewall::disable_firewalls;
-use sftp::SFTP_LISTEN_PORT;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::LocalTime;
 use tracing_subscriber::fmt::{self};
@@ -19,10 +18,13 @@ use tracing::debug;
 use tracing::error;
 
 mod firewall;
+mod ssh;
 mod sftp;
 
 // Janky hack to address https://github.com/tokio-rs/tracing/issues/1817
 struct NewType(Pretty);
+
+pub(crate) const SSH_LISTEN_PORT: u16 = 22;
 
 impl<'writer> FormatFields<'writer> for NewType {
     fn format_fields<R: RecordFields>(
@@ -75,9 +77,9 @@ async fn main() {
         }
     }
 
-    debug!("starting sftp server");
+    debug!("starting ssh server");
 
-    if let Err(e) = crate::sftp::start_sftp_server().await {
+    if let Err(e) = crate::ssh::start_ssh_server(SSH_LISTEN_PORT).await {
         error!("{}", e);
     }
 }
