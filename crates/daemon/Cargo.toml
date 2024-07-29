@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 async-trait = "0.1.81"
+portable-pty = "0.8.1"
 russh = "0.43"
 russh-keys = "0.43.0"
 russh-sftp = "2.0.3"

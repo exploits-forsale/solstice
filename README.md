@@ -186,3 +186,4 @@ Because I could. And I know how to build/debug/deploy my own code better than an
 - [Thoxy67 for their original rspe lib](https://github.com/Thoxy67/rspe) which was modified.
 - [monoxgas/sRDI](https://github.com/monoxgas/sRDI/blob/9fdd5c44383039519accd1e6bac4acd5a046a92c/ShellcodeRDI/ShellcodeRDI.c) [polycone/pe-loader](https://github.com/polycone/pe-loader/blob/master/loader/src/loader/) for their PE loaders which served as a reference to double-check I was doing things right
 - [horsicq/XPEViewer](https://github.com/horsicq/XPEViewer) which was useful for viewing data from PEs I was having trouble loading.
+- [0xC0ffee1/sessio](https://github.com/0xC0ffee1/sessio) which has a ready-to-use PTY Shell impl, used in the daemon-crate.
