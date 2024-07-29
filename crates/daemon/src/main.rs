@@ -13,6 +13,8 @@ use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::FormatFields;
 
 use std::env;
+use std::fs::create_dir_all;
+use std::path;
 
 use tracing::debug;
 use tracing::error;
@@ -38,8 +40,10 @@ impl<'writer> FormatFields<'writer> for NewType {
 
 #[tokio::main]
 async fn main() {
+    let appdata_env = env::var("LOCALAPPDATA").unwrap();
+    let appdata_dir = path::Path::new(&appdata_env);
     let file_appender =
-        tracing_appender::rolling::daily(env::var("LOCALAPPDATA").unwrap(), "daemon.log");
+        tracing_appender::rolling::daily(appdata_dir, "daemon.log");
 
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let subscriber = tracing_subscriber::registry()
@@ -78,8 +82,16 @@ async fn main() {
     }
 
     debug!("starting ssh server");
+    let config_dir = &appdata_dir.join("solstice_ssh");
+    if !config_dir.exists() {
+        if let Err(e) = create_dir_all(config_dir).unwrap() {
+            error!("failed to create config dir: {:?}", e);
+            return;
+        }
+    }
+    debug!("using config dir: {config_dir:?}");
 
-    if let Err(e) = crate::ssh::start_ssh_server(SSH_LISTEN_PORT).await {
+    if let Err(e) = crate::ssh::start_ssh_server(SSH_LISTEN_PORT, config_dir).await {
         error!("{}", e);
     }
 }

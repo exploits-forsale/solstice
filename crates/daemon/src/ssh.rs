@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::fs;
 use std::io::Read;
+use std::io::Seek;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -258,13 +261,35 @@ impl russh::server::Handler for SshSession {
     }
 }
 
-pub async fn start_ssh_server(port: u16) -> std::io::Result<()> {
+pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<KeyPair> {
+    let ed25519_key_path = config_dir.join("ssh_host_ed25519_key");
+    if let Ok(secret_key) = russh_keys::load_secret_key(&ed25519_key_path, None)
+    {
+        return Ok(secret_key);
+    }
+
+    let generated = KeyPair::generate_ed25519().unwrap();
+    let priv_key_writer = fs::File::create(&ed25519_key_path)?;
+    russh_keys::encode_pkcs8_pem(&generated, priv_key_writer)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+
+    let pub_key_writer = fs::File::create(ed25519_key_path.to_str().unwrap().to_string() + ".pub")?;
+    russh_keys::write_public_key_base64(pub_key_writer, &generated.clone_public_key().unwrap())
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+
+    Ok(generated)
+}
+
+pub async fn start_ssh_server(port: u16, config_dir: &PathBuf) -> std::io::Result<()> {
     debug!("in start_ssh_server");
+
+    debug!("Loading or generating hostkey(s)");
+    let ed25519_host_key = load_host_key(config_dir)?;
 
     let config = russh::server::Config {
         auth_rejection_time: Duration::from_secs(3),
         auth_rejection_time_initial: Some(Duration::from_secs(0)),
-        keys: vec![KeyPair::generate_ed25519().unwrap()],
+        keys: vec![ed25519_host_key],
         ..Default::default()
     };
 
