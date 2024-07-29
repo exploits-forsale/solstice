@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::io::Read;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,12 +12,22 @@ use russh::server::Server as _;
 use russh::server::Session;
 use russh::Channel;
 use russh::ChannelId;
+use russh::CryptoVec;
+use russh::Pty;
 use russh_keys::key::KeyPair;
 use tokio::sync::Mutex;
 use tracing::debug;
+use tracing::error;
 use tracing::info;
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize, PtySystem, SlavePty};
 
 use crate::sftp::SftpSession;
+
+struct PtyStream{
+    reader: Mutex<Box<dyn Read + Send>>,
+    writer: Mutex<Box<dyn Write + Send>>,
+    slave: Mutex<Box<dyn SlavePty + Send>>
+}
 
 #[derive(Clone)]
 struct Server;
@@ -30,12 +42,14 @@ impl russh::server::Server for Server {
 
 struct SshSession {
     clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
+    ptys: Arc<Mutex<HashMap<ChannelId, Arc<PtyStream>>>>,
 }
 
 impl Default for SshSession {
     fn default() -> Self {
         Self {
             clients: Arc::new(Mutex::new(HashMap::new())),
+            ptys: Arc::new(Mutex::new(HashMap::new()))
         }
     }
 }
@@ -94,6 +108,152 @@ impl russh::server::Handler for SshSession {
             session.channel_failure(channel_id);
         }
 
+        Ok(())
+    }
+
+    async fn shell_request(
+        &mut self,
+        channel_id: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+
+        let handle_reader = session.handle();
+        let handle_waiter = session.handle();
+
+
+        let ptys = self.ptys.clone();
+
+        tokio::spawn(async move {
+            let pty_cloned = ptys.clone();
+            let shell = "cmd.exe";
+            let reader_handle = tokio::spawn(async move {
+                loop {
+                    let mut buffer = vec![0; 1024];
+                    let pty_cloned = ptys.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
+                        let mut reader = stream.reader.blocking_lock();
+                        reader.read(&mut buffer).map(|n| (n, buffer))
+
+                    }).await {
+                        Ok(Ok((n, buffer))) if n == 0 => {
+                            debug!("PTY: No more data to read.");
+                            break;
+                        }
+                        Ok(Ok((n,buffer))) => {
+                            debug!("PTY read {} bytes", n);
+                            //info!("Sending {}", String::from_utf8_lossy(&buffer[0..n]));
+                            if let Err(e) = handle_reader.data(channel_id, CryptoVec::from_slice(&buffer[0..n])).await {
+                                error!("Error sending PTY data to client: {:?}", e);
+                                break;
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            error!("PTY read error: {:?}", e);
+                            break;
+                        }
+                        Err(e) => {
+                            error!("Join error: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            let child_status = tokio::task::spawn_blocking(move || {
+                let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
+
+                let mut child = stream.slave.blocking_lock().spawn_command(CommandBuilder::new(shell)).expect("Failed to spawn child process");
+                child.wait().expect("Failed to wait on child process")
+            }).await;
+
+            match child_status {
+                Ok(status) => {
+                    if status.success() {
+                        info!("Child process exited successfully.");
+                        //reader_handle.abort();
+                        let _ = handle_waiter.exit_status_request(channel_id, status.exit_code()).await;
+                        let _ = handle_waiter.close(channel_id).await;
+                    } else {
+                        error!("Child process exited with status: {:?}", status);
+                        //reader_handle.abort();
+                        let _ = handle_waiter.exit_status_request(channel_id, status.exit_code()).await;
+                        let _ = handle_waiter.close(channel_id).await;
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to wait on child process: {:?}", e);
+                }
+            }
+        });
+        Ok(())
+    }
+
+    async fn pty_request(
+        &mut self,
+        channel_id: ChannelId,
+        term: &str,
+        col_width: u32,
+        row_height: u32,
+        pix_width: u32,
+        pix_height: u32,
+        modes: &[(Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        info!("Requesting PTY!");
+
+        info!("PTY request received: term={}, col_width={}, row_height={}", term, col_width, row_height);
+
+        let pty_system = native_pty_system();
+        let pty_pair = pty_system.openpty(PtySize {
+            rows: row_height as u16,
+            cols: col_width as u16,
+            pixel_width: pix_width as u16,
+            pixel_height: pix_height as u16,
+        })?;
+
+        let pair = pty_pair;
+        let slave = pair.slave;
+        let mut master = pair.master;
+
+        let master_reader = Mutex::new(master.try_clone_reader().unwrap());
+        let mut master_writer = Mutex::new(master.take_writer().unwrap());
+
+        let p = Mutex::new(master);
+        
+
+        self.ptys
+        .lock()
+        .await
+            .insert(channel_id, Arc::new(PtyStream {
+                reader: master_reader,
+                writer: master_writer,
+                slave: Mutex::new(slave)
+            }));
+        
+        session.request_success();
+        Ok(())
+    }
+
+
+    async fn data(
+        &mut self,
+        channel_id: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+
+        if let Some(pty_stream) = self.ptys.lock().await.get_mut(&channel_id) {
+            info!("pty_writer: data = {data:02x?}");
+
+            let mut pty_writer = pty_stream.writer.lock().await;
+
+            pty_writer
+                .write_all(data)
+                .map_err(anyhow::Error::new)?;
+
+            pty_writer.flush().map_err(anyhow::Error::new)?;    
+        }
         Ok(())
     }
 }
