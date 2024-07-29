@@ -71,7 +71,7 @@ async fn main() {
         }
 
         if let Err(e) =
-            allow_port_through_firewall("Solstice Daemon - SSH", SFTP_LISTEN_PORT).context("SSH")
+            allow_port_through_firewall("Solstice Daemon - SSH", SSH_LISTEN_PORT).context("SSH")
         {
             error!("failed to allow port through firewall: {:?}", e);
         }
