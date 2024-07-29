@@ -144,8 +144,6 @@ impl russh::server::Handler for SshSession {
                             break;
                         }
                         Ok(Ok((n,buffer))) => {
-                            debug!("PTY read {} bytes", n);
-                            //info!("Sending {}", String::from_utf8_lossy(&buffer[0..n]));
                             if let Err(e) = handle_reader.data(channel_id, CryptoVec::from_slice(&buffer[0..n])).await {
                                 error!("Error sending PTY data to client: {:?}", e);
                                 break;
@@ -247,8 +245,6 @@ impl russh::server::Handler for SshSession {
     ) -> Result<(), Self::Error> {
 
         if let Some(pty_stream) = self.ptys.lock().await.get_mut(&channel_id) {
-            info!("pty_writer: data = {data:02x?}");
-
             let mut pty_writer = pty_stream.writer.lock().await;
 
             pty_writer
