@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [shellcode_utils, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, loader, daemon, server]
+        component: [shellcode_utils, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, loader, daemon, server, test_program_rust]
         features: ["--all-features", ""]
 
     steps:
