@@ -1,0 +1,25 @@
+name: Build
+
+on:
+  push:
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [shellcode_utils, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, loader, daemon, server]
+        features: ["--all-features", ""]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Build ${{ matrix.component }}
+        working-directory: crates/${{ matrix.component }}
+        run: cargo build --release ${{ matrix.features }}
