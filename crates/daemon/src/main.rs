@@ -84,7 +84,7 @@ async fn main() {
     debug!("starting ssh server");
     let config_dir = &appdata_dir.join("solstice_ssh");
     if !config_dir.exists() {
-        if let Err(e) = create_dir_all(config_dir).unwrap() {
+        if let Err(e) = create_dir_all(config_dir) {
             error!("failed to create config dir: {:?}", e);
             return;
         }
