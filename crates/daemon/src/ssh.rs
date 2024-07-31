@@ -5,6 +5,7 @@ use std::io::Seek;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::ptr::read;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,17 +34,66 @@ struct PtyStream{
 }
 
 #[derive(Clone)]
-struct Server;
+struct Server {
+    config_dir: PathBuf,
+}
 
 impl russh::server::Server for Server {
     type Handler = SshSession;
 
     fn new_client(&mut self, _: Option<SocketAddr>) -> Self::Handler {
-        SshSession::default()
+        SshSession {
+            config_dir: self.config_dir.clone(),
+            ..Default::default()
+        }
     }
 }
 
+fn deserialize_authorized_keys(keydata: &str) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
+    let mut keys = Vec::new();
+
+    for line in keydata.lines() {
+        let line_trimmed = line.trim();
+
+        if line_trimmed.is_empty() {
+            continue;
+        }
+
+        let mut split = line_trimmed.split_whitespace();
+
+        // Skip over pubkey prefix
+        split.next();
+
+        let public_key = russh_keys::parse_public_key_base64(split.next().unwrap())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        keys.push(public_key);
+    }
+
+    Ok(keys)
+}
+
+fn read_authorized_keys(config_dir: &PathBuf) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
+    let authorized_keys_path = config_dir.join("authorized_keys");
+
+    if !authorized_keys_path.exists() {
+        // Create the file and its parent directories if they don't exist
+        if let Some(parent) = authorized_keys_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        
+        std::fs::File::create(&authorized_keys_path)?;
+    }
+
+    let mut file = fs::File::open(&authorized_keys_path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    deserialize_authorized_keys(&contents)
+}
+
+
 struct SshSession {
+    config_dir: PathBuf,
     clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
     ptys: Arc<Mutex<HashMap<ChannelId, Arc<PtyStream>>>>,
 }
@@ -51,6 +101,8 @@ struct SshSession {
 impl Default for SshSession {
     fn default() -> Self {
         Self {
+            // FIXME: What would be a good default here?
+            config_dir: "".into(),
             clients: Arc::new(Mutex::new(HashMap::new())),
             ptys: Arc::new(Mutex::new(HashMap::new()))
         }
@@ -79,7 +131,14 @@ impl russh::server::Handler for SshSession {
         public_key: &russh_keys::key::PublicKey,
     ) -> Result<Auth, Self::Error> {
         info!("credentials: {}, {:?}", user, public_key);
-        Ok(Auth::Accept)
+        let keys = read_authorized_keys(&self.config_dir)?;
+
+        if keys.contains(public_key) {
+            info!("User {user} accepted via pubkey auth");
+            return Ok(Auth::Accept);
+        }
+
+        Ok(Auth::Reject { proceed_with_methods: (None) })
     }
 
     async fn channel_open_session(
@@ -289,7 +348,9 @@ pub async fn start_ssh_server(port: u16, config_dir: &PathBuf) -> std::io::Resul
         ..Default::default()
     };
 
-    let mut server = Server;
+    let mut server = Server {
+        config_dir: config_dir.to_path_buf()
+    };
 
     let host = "0.0.0.0";
     debug!("about to listen on {host}:{port}");
@@ -299,4 +360,22 @@ pub async fn start_ssh_server(port: u16, config_dir: &PathBuf) -> std::io::Resul
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_authorized_keys() {
+        let keydata = r#"
+        ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLHQEZWhL+IUEDghyVkDy81piOgZ8bQ7+Jso+gigCHmq0Qq4Liv8LqNxvk/qBS8PdHfyZVIaLhJb2bsXzm5qQaA=
+        ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLHQEZWhL+IUEDghyVkDy81piOgZ8bQ7+Jso+gigCHmq0Qq4Liv8LqNxvk/qBS8PdHfyZVIaLhJb2bsXzm5qQaA= othername
+        ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaIg9xwd9czg0A8Tar2iL71X4WWN0oermPA1PO49kqY
+        ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaIg9xwd9czg0A8Tar2iL71X4WWN0oermPA1PO49kqY user@host.com
+        ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC6vfh0hQ6itOgOmaL07tYoxAesjyXB3MYdBpB82Pz3AG6dacyVQ+pUPf6WP3rWvytMUc8NQ0jy2Zj+qmCNKRyoTT6KJaa3g1h3mywi5n7EPGoyPIy3KJq0RJ7b44SUtiPTRY1mfcsPbdzQHH/NtALuknDdk95scVUBZWAFiCAyES4MhVZvbeM/Z7Yg4nZJ8G+f6YluSVuRZJPAjtxb+diLKrNRqRBior5LUAqGRlgVsin/waYFR7LJ3vgjmESsZB6C4HrJBRfsWUkl1RXN114HgGRZ6PaOtpUk5BMIrj7SNmr7UbHfHpAeNgHxgPcdNAxe9VHmqJvfqPgx/JP6E+GaqdhdFb/jK01SBSQKJAv6HaLfhQ56Ok6rX7jUv+eqj41i+4+rMzOej6dOh5W+dexyvgxEVMNi0EY0BKnN8uCm1deQbVIbeAirkjAPD3JMD0H/v5T+XdJ1VSLEMTwiN+mC2ncSGv/MsNPy905cDxUZX6GsIHN8Ku8RFlWfHOGahV8= user@host.com
+        ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC6vfh0hQ6itOgOmaL07tYoxAesjyXB3MYdBpB82Pz3AG6dacyVQ+pUPf6WP3rWvytMUc8NQ0jy2Zj+qmCNKRyoTT6KJaa3g1h3mywi5n7EPGoyPIy3KJq0RJ7b44SUtiPTRY1mfcsPbdzQHH/NtALuknDdk95scVUBZWAFiCAyES4MhVZvbeM/Z7Yg4nZJ8G+f6YluSVuRZJPAjtxb+diLKrNRqRBior5LUAqGRlgVsin/waYFR7LJ3vgjmESsZB6C4HrJBRfsWUkl1RXN114HgGRZ6PaOtpUk5BMIrj7SNmr7UbHfHpAeNgHxgPcdNAxe9VHmqJvfqPgx/JP6E+GaqdhdFb/jK01SBSQKJAv6HaLfhQ56Ok6rX7jUv+eqj41i+4+rMzOej6dOh5W+dexyvgxEVMNi0EY0BKnN8uCm1deQbVIbeAirkjAPD3JMD0H/v5T+XdJ1VSLEMTwiN+mC2ncSGv/MsNPy905cDxUZX6GsIHN8Ku8RFlWfHOGahV8=
+        "#;
+        assert_eq!(6, deserialize_authorized_keys(keydata).unwrap().len());
+    }
 }
