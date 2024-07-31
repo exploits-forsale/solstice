@@ -12,6 +12,9 @@ jobs:
       fail-fast: false
       matrix:
         component: [shellcode_utils, loader, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, shellcode_gen, daemon, server]
+        include:
+          - component: daemon
+            features: firewall
 
     steps:
       - name: Checkout
@@ -22,7 +25,7 @@ jobs:
 
       - name: Build ${{ matrix.component }}
         working-directory: crates/${{ matrix.component }}
-        run: cargo build --release --all-features
+        run: cargo build --release --features=${{ matrix.features }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
