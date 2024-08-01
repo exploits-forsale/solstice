@@ -372,7 +372,22 @@ impl russh_sftp::server::Handler for SftpSession {
         handle: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
         debug!("fstat: {id} {handle}");
-        Err(self.unimplemented())
+        let file = self
+            .handles
+            .get_mut(&handle)
+            .ok_or(StatusCode::BadMessage)
+            .map(InternalHandle::file)??;
+
+        match file.metadata().await.context("fstat metadata") {
+            Ok(meta) => Ok(Attrs {
+                id,
+                attrs: (&meta).into(),
+            }),
+            Err(e) => {
+                error!("{:?}", e);
+                Err(StatusCode::NoSuchFile)
+            }
+        }
     }
 
     async fn setstat(
@@ -442,12 +457,64 @@ impl russh_sftp::server::Handler for SftpSession {
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         debug!("mkdir: {id} {path}");
-        Err(self.unimplemented())
+        if let Some(path) = unix_like_path_to_windows_path(&path) {
+            match path.parent() {
+                Some(parent)
+                    if parent
+                        .file_name()
+                        .expect("path has no filename?")
+                        .to_string_lossy()
+                        == "/" =>
+                {
+                    Err(StatusCode::PermissionDenied)
+                }
+                Some(parent) if parent.is_dir() => {
+                    if let Err(e) = tokio::fs::create_dir(path)
+                        .await
+                        .context("creating dir")
+                    {
+                        error!("creating dir: {:?}", e);
+                        Err(StatusCode::Failure)
+                    } else {
+                        Ok(Status {
+                            id,
+                            status_code: StatusCode::Ok,
+                            error_message: "Ok".to_string(),
+                            language_tag: "en-US".to_string(),
+                        })
+                    }
+                },
+                _ => Err(StatusCode::NoSuchFile),
+            }
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
         debug!("rmdir: {id} {path}");
-        Err(self.unimplemented())
+        if let Some(path) = unix_like_path_to_windows_path(&path) {
+            if !path.exists() || !path.is_dir() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if let Err(e) = tokio::fs::remove_dir(&path)
+                .await
+                .context("deleting dir")
+            {
+                error!("deleting dir: {:?}", e);
+                Err(StatusCode::Failure)
+            } else {
+                Ok(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                })
+            }
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn stat(
@@ -487,12 +554,74 @@ impl russh_sftp::server::Handler for SftpSession {
         newpath: String,
     ) -> Result<Status, Self::Error> {
         debug!("rename: {id} from= {oldpath} to= {newpath}");
-        Err(self.unimplemented())
+        if let Some(oldpath_win) = unix_like_path_to_windows_path(&oldpath) {
+            if !oldpath_win.exists() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if let Some(newpath_win) = unix_like_path_to_windows_path(&newpath) {
+                if newpath_win.exists() {
+                    // Newpath already exists
+                    return Err(StatusCode::OpUnsupported);
+                }
+
+                if let Err(e) = tokio::fs::rename(&oldpath_win, &newpath_win)
+                    .await
+                    .context("renaming file/dir")
+                {
+                    error!("renaming dir/file: {:?}", e);
+                    Err(StatusCode::OpUnsupported)
+                } else {
+                    Ok(Status {
+                        id,
+                        status_code: StatusCode::Ok,
+                        error_message: "Ok".to_string(),
+                        language_tag: "en-US".to_string(),
+                    })
+                }
+            }
+            else {
+                Err(StatusCode::NoSuchFile)
+            }
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         debug!("readlink: {id} {path}");
-        Err(self.unimplemented())
+        if let Some(path) = unix_like_path_to_windows_path(&path) {
+            if !path.exists() {
+                return Err(StatusCode::NoSuchFile);
+            }
+            else if !path.is_symlink() {
+                return Err(StatusCode::OpUnsupported);
+            }
+
+            match tokio::fs::read_link(&path)
+                .await
+                .context("reading link")
+            {
+                Ok(file) => {
+                    let metadata = &file.metadata().unwrap();
+                    let filename = file.to_string_lossy().to_owned();
+                    Ok(Name {
+                        id,
+                        files: vec![File {
+                            filename: filename.to_string(),
+                            longname: filename.to_string(),
+                            attrs: metadata.into()
+                        }]
+                    })
+                },
+                Err(e) => {
+                    error!("reading link: {e:?}");
+                    Err(StatusCode::Failure)
+                }
+            }
+        } else {
+            Err(StatusCode::NoSuchFile)
+        }
     }
 
     async fn symlink(
@@ -501,7 +630,32 @@ impl russh_sftp::server::Handler for SftpSession {
         linkpath: String,
         targetpath: String,
     ) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
+        debug!("symlink: {id} {linkpath} {targetpath}");
+        if let Some(targetpath_win) = unix_like_path_to_windows_path(&targetpath) {
+            if !targetpath_win.exists() {
+                return Err(StatusCode::NoSuchFile);
+            }
+
+            if let Some(linkpath_win) = unix_like_path_to_windows_path(&linkpath) {
+                match tokio::fs::hard_link(&linkpath_win, &targetpath_win)
+                    .await
+                    .context("creating link")
+                {
+                    Ok(_) => return Ok(Status {
+                        id,
+                        status_code: StatusCode::Ok,
+                        error_message: "Ok".to_string(),
+                        language_tag: "en-US".to_string(),
+                    }),
+                    Err(e) => {
+                        error!("reading link: {e:?}");
+                        return Err(StatusCode::Failure);
+                    }
+                }
+            }
+        }
+
+        Err(StatusCode::Failure)
     }
 
     async fn extended(
