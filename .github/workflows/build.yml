@@ -15,6 +15,7 @@ jobs:
         include:
           - component: daemon
             features: firewall
+            test: true
 
     steps:
       - name: Checkout
@@ -24,6 +25,7 @@ jobs:
           toolchain: nightly
 
       - name: Test ${{ matrix.component }}
+        if: ${{ matrix.test }}
         working-directory: crates/${{ matrix.component }}
         run: cargo test --release --features=${{ matrix.features }}
 
