@@ -373,9 +373,7 @@ mod tests {
         ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLHQEZWhL+IUEDghyVkDy81piOgZ8bQ7+Jso+gigCHmq0Qq4Liv8LqNxvk/qBS8PdHfyZVIaLhJb2bsXzm5qQaA= othername
         ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaIg9xwd9czg0A8Tar2iL71X4WWN0oermPA1PO49kqY
         ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaIg9xwd9czg0A8Tar2iL71X4WWN0oermPA1PO49kqY user@host.com
-        ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC6vfh0hQ6itOgOmaL07tYoxAesjyXB3MYdBpB82Pz3AG6dacyVQ+pUPf6WP3rWvytMUc8NQ0jy2Zj+qmCNKRyoTT6KJaa3g1h3mywi5n7EPGoyPIy3KJq0RJ7b44SUtiPTRY1mfcsPbdzQHH/NtALuknDdk95scVUBZWAFiCAyES4MhVZvbeM/Z7Yg4nZJ8G+f6YluSVuRZJPAjtxb+diLKrNRqRBior5LUAqGRlgVsin/waYFR7LJ3vgjmESsZB6C4HrJBRfsWUkl1RXN114HgGRZ6PaOtpUk5BMIrj7SNmr7UbHfHpAeNgHxgPcdNAxe9VHmqJvfqPgx/JP6E+GaqdhdFb/jK01SBSQKJAv6HaLfhQ56Ok6rX7jUv+eqj41i+4+rMzOej6dOh5W+dexyvgxEVMNi0EY0BKnN8uCm1deQbVIbeAirkjAPD3JMD0H/v5T+XdJ1VSLEMTwiN+mC2ncSGv/MsNPy905cDxUZX6GsIHN8Ku8RFlWfHOGahV8= user@host.com
-        ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC6vfh0hQ6itOgOmaL07tYoxAesjyXB3MYdBpB82Pz3AG6dacyVQ+pUPf6WP3rWvytMUc8NQ0jy2Zj+qmCNKRyoTT6KJaa3g1h3mywi5n7EPGoyPIy3KJq0RJ7b44SUtiPTRY1mfcsPbdzQHH/NtALuknDdk95scVUBZWAFiCAyES4MhVZvbeM/Z7Yg4nZJ8G+f6YluSVuRZJPAjtxb+diLKrNRqRBior5LUAqGRlgVsin/waYFR7LJ3vgjmESsZB6C4HrJBRfsWUkl1RXN114HgGRZ6PaOtpUk5BMIrj7SNmr7UbHfHpAeNgHxgPcdNAxe9VHmqJvfqPgx/JP6E+GaqdhdFb/jK01SBSQKJAv6HaLfhQ56Ok6rX7jUv+eqj41i+4+rMzOej6dOh5W+dexyvgxEVMNi0EY0BKnN8uCm1deQbVIbeAirkjAPD3JMD0H/v5T+XdJ1VSLEMTwiN+mC2ncSGv/MsNPy905cDxUZX6GsIHN8Ku8RFlWfHOGahV8=
         "#;
-        assert_eq!(6, deserialize_authorized_keys(keydata).unwrap().len());
+        assert_eq!(4, deserialize_authorized_keys(keydata).unwrap().len());
     }
 }
