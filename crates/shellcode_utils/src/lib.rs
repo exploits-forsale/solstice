@@ -21,17 +21,31 @@ pub mod prelude;
 
 use crate::binds::*;
 use alloc::vec::Vec;
+use core::alloc::Allocator;
 use core::arch::asm;
+use core::mem::offset_of;
 use core::ptr::null_mut;
-use core::{alloc::Allocator, mem::offset_of};
-use functions::{
-    fetch_close_handle, fetch_create_tool_help32, fetch_get_current_process_id,
-    fetch_get_current_thread_id, fetch_open_thread, fetch_suspend_thread, fetch_thread_32_first,
-    fetch_thread_32_next, CreateToolhelp32SnapshotFn, GetCurrentThreadIdFn,
-};
+use functions::fetch_close_handle;
+use functions::fetch_create_tool_help32;
+use functions::fetch_get_current_process_id;
+use functions::fetch_get_current_thread_id;
+use functions::fetch_open_thread;
+use functions::fetch_suspend_thread;
+use functions::fetch_thread_32_first;
+use functions::fetch_thread_32_next;
+use functions::CreateToolhelp32SnapshotFn;
+use functions::GetCurrentThreadIdFn;
 use paste::paste;
-use windows_sys::Win32::System::Diagnostics::ToolHelp::{TH32CS_SNAPTHREAD, THREADENTRY32};
+use windows_sys::core::PCSTR;
+use windows_sys::Win32::System::Diagnostics::ToolHelp::TH32CS_SNAPTHREAD;
+use windows_sys::Win32::System::Diagnostics::ToolHelp::THREADENTRY32;
 use windows_sys::Win32::System::Threading::THREAD_SUSPEND_RESUME;
+
+#[repr(C)]
+pub struct ShellcodeArgs {
+    pub image_name: PCSTR,
+    pub image_args: PCSTR,
+}
 
 #[macro_export]
 macro_rules! debug_break {

@@ -24,14 +24,6 @@ path = "../shellcode_utils"
 [dependencies.compiler_builtins]
 git = "https://github.com/rust-lang/compiler-builtins"
 
-[dependencies.num]
-version = "0.4"
-default-features = false
-
-[dependencies.num-traits]
-version = "0.2"
-default-features = false
-
 [dependencies.solstice_loader]
 path = "../loader"
 features = ["shellcode_compat"]

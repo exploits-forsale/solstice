@@ -17,7 +17,7 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-type Stage2Fn = fn() -> u64;
+type Stage2Fn = fn(*const ShellcodeArgs) -> u64;
 
 const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\stage2.bin"#, "\0");
 const STAGE1_ERROR_FILE_OPEN_FAILED: u64 = 0x10000001;
@@ -115,7 +115,7 @@ pub extern "C" fn main() -> u64 {
     debug_print!("Executing stage2");
 
     let stage2: Stage2Fn = unsafe { core::mem::transmute(stage2_data.as_ptr()) };
-    stage2()
+    stage2(core::ptr::null())
 }
 
 // #[allow(unused_attributes)]
