@@ -125,7 +125,6 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
             debug_print!("Calculating str len");
             let image_name_ptr = (*args).image_name;
             let mut counter = 0;
-            debug_break!();
             let image_name_len = loop {
                 if *image_name_ptr.offset(counter) == 0 {
                     break counter;
@@ -221,6 +220,10 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
             } else {
                 unsafe {
                     let args_ptr = (*args).image_args;
+                    if args_ptr.is_null() {
+                        return None;
+                    }
+
                     let mut counter = 0;
                     let args_len = loop {
                         if *args_ptr.offset(counter) == 0 {
