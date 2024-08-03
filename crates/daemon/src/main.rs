@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::LocalTime;
 use tracing_subscriber::fmt::{self};
@@ -17,8 +19,8 @@ use tracing::debug;
 use tracing::error;
 
 mod firewall;
-mod ssh;
 mod sftp;
+mod ssh;
 
 // Janky hack to address https://github.com/tokio-rs/tracing/issues/1817
 struct NewType(Pretty);
@@ -39,8 +41,7 @@ impl<'writer> FormatFields<'writer> for NewType {
 async fn main() {
     let appdata_env = env::var("LOCALAPPDATA").unwrap();
     let appdata_dir = path::Path::new(&appdata_env);
-    let file_appender =
-        tracing_appender::rolling::daily(appdata_dir, "daemon.log");
+    let file_appender = tracing_appender::rolling::daily(appdata_dir, "daemon.log");
 
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let subscriber = tracing_subscriber::registry()
@@ -66,13 +67,14 @@ async fn main() {
 
     #[cfg(feature = "firewall")]
     {
-        if let Err(e) = disable_firewalls() {
+        if let Err(e) = crate::firewall::disable_firewalls() {
             error!("failed to disable firewall: {:?}", e);
             return;
         }
 
         if let Err(e) =
-            allow_port_through_firewall("Solstice Daemon - SSH", SSH_LISTEN_PORT).context("SSH")
+            crate::firewall::allow_port_through_firewall("Solstice Daemon - SSH", SSH_LISTEN_PORT)
+                .context("SSH")
         {
             error!("failed to allow port through firewall: {:?}", e);
         }
