@@ -1,6 +1,3 @@
-use anyhow::Context;
-use firewall::allow_port_through_firewall;
-use firewall::disable_firewalls;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::LocalTime;
 use tracing_subscriber::fmt::{self};

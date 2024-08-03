@@ -4,16 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use russh_sftp::protocol::Stat;
-use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
-use tokio::io::AsyncSeek;
 
 use async_trait::async_trait;
 use russh_sftp::protocol::Attrs;
 use russh_sftp::protocol::File;
 use russh_sftp::protocol::FileAttributes;
-use russh_sftp::protocol::FileMode;
 use russh_sftp::protocol::Handle;
 use russh_sftp::protocol::Name;
 use russh_sftp::protocol::OpenFlags;
@@ -23,7 +19,6 @@ use russh_sftp::protocol::Version;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncSeekExt;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
 use tracing::debug;
 use tracing::error;
 use tracing::info;

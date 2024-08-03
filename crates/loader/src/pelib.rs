@@ -9,7 +9,6 @@ use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DATA_DIRECTORY;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_BASERELOC;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_IMPORT;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_TLS;
-use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS32;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_SCN_MEM_EXECUTE;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_SCN_MEM_READ;
@@ -585,14 +584,14 @@ pub unsafe fn patch_peb(
 
     if let Some(args) = args {
         let len = args.len() * core::mem::size_of::<u16>();
-        (*(*peb).ProcessParameters).CommandLine.Buffer = (args.as_ptr() as *mut _);
+        (*(*peb).ProcessParameters).CommandLine.Buffer = args.as_ptr() as *mut _;
         (*(*peb).ProcessParameters).CommandLine.Length = len as u16;
         (*(*peb).ProcessParameters).CommandLine.MaximumLength = len as u16;
     }
 
     if let Some(image_name) = image_name {
         let len = image_name.len() * core::mem::size_of::<u16>();
-        (*(*peb).ProcessParameters).ImagePathName.Buffer = (image_name.as_ptr() as *mut _);
+        (*(*peb).ProcessParameters).ImagePathName.Buffer = image_name.as_ptr() as *mut _;
         (*(*peb).ProcessParameters).ImagePathName.Length = len as u16;
         (*(*peb).ProcessParameters).ImagePathName.MaximumLength = len as u16;
     }

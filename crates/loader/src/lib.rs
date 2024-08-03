@@ -21,7 +21,6 @@ use pelib::get_nt_header;
 use pelib::patch_kernelbase;
 use pelib::patch_module_list;
 use pelib::patch_peb;
-use pelib::teb;
 use pelib::write_import_table;
 use pelib::write_sections;
 use shellcode_utils::prelude::CreateThreadFn;
@@ -35,8 +34,6 @@ use shellcode_utils::prelude::VirtualProtectFn;
 use utils::detect_platform;
 
 #[cfg(not(feature = "shellcode_compat"))]
-use windows_sys::Win32::System::Diagnostics::Debug::RtlAddFunctionTable;
-#[cfg(not(feature = "shellcode_compat"))]
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleA;
 #[cfg(not(feature = "shellcode_compat"))]
 use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
@@ -46,12 +43,9 @@ use windows_sys::Win32::System::LibraryLoader::LoadLibraryA;
 use windows_sys::Win32::System::Memory::VirtualAlloc;
 #[cfg(not(feature = "shellcode_compat"))]
 use windows_sys::Win32::System::Memory::VirtualProtect;
-#[cfg(not(feature = "shellcode_compat"))]
-use windows_sys::Win32::System::Threading::CreateThread;
 
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_EXCEPTION;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_TLS;
-use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS32;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_RUNTIME_FUNCTION_ENTRY;
 use windows_sys::Win32::System::Memory::MEM_COMMIT;
@@ -60,9 +54,6 @@ use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows_sys::Win32::System::SystemServices::DLL_THREAD_ATTACH;
 use windows_sys::Win32::System::SystemServices::IMAGE_TLS_DIRECTORY64;
 
-use core::arch;
-use core::ffi::c_char;
-use core::ffi::c_int;
 use core::ffi::c_void;
 use core::ptr;
 

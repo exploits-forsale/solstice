@@ -2,11 +2,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Read;
-use std::io::Seek;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::ptr::read;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +13,6 @@ use async_trait::async_trait;
 use portable_pty::native_pty_system;
 use portable_pty::CommandBuilder;
 use portable_pty::MasterPty;
-use portable_pty::PtyPair;
 use portable_pty::PtySize;
 use portable_pty::PtySystem;
 use portable_pty::SlavePty;
@@ -335,10 +332,10 @@ impl russh::server::Handler for SshSession {
 
         let pair = pty_pair;
         let slave = pair.slave;
-        let mut master = pair.master;
+        let master = pair.master;
 
         let master_reader = Mutex::new(master.try_clone_reader().unwrap());
-        let mut master_writer = Mutex::new(master.take_writer().unwrap());
+        let master_writer = Mutex::new(master.take_writer().unwrap());
 
         let p = Mutex::new(master);
 
