@@ -61,11 +61,14 @@ fn canonizalize_unix_path_name(path: &PathBuf) -> PathBuf {
 
 fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
     let parsed_path = Path::new(&unix_path);
-
+    debug!("unix to windows path: {unix_path}");
     // Only accept full paths
     if !parsed_path.has_root() {
         debug!("returning None");
         return None;
+    } else if unix_path == "/" {
+        debug!("unix->windows: returning root path: /");
+        return Some(PathBuf::from("/"));
     }
 
     // Grab the drive letter. We assume the first dir is the drive
@@ -216,24 +219,15 @@ impl russh_sftp::server::Handler for SftpSession {
     /// Must contain only one name and a dummy attributes
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         info!("realpath: {}", path);
-        if path == "." {
-            let attrs = FileAttributes::default();
-            return Ok(Name {
-                id,
-                files: vec![File {
-                    filename: "/".to_string(),
-                    longname: "/".to_string(),
-                    attrs,
-                }],
-            });
-        }
+        let normalized = canonizalize_unix_path_name(&PathBuf::from(path));
+        debug!("realpath: returning: {normalized:?}");
         let mut attrs = FileAttributes::default();
         attrs.set_dir(true);
         Ok(Name {
             id,
             files: vec![File {
-                filename: path.to_string(),
-                longname: path.to_string(),
+                filename: normalized.to_string_lossy().to_string(),
+                longname: normalized.to_string_lossy().to_string(),
                 attrs: attrs,
             }],
         })
@@ -727,6 +721,7 @@ mod tests {
 
         #[test]
         fn test_canonicalize_path_name() {
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from(".")), PathBuf::from("/"));
             assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/")), PathBuf::from("/"));
             assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/..")), PathBuf::from("/"));
             assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/../..")), PathBuf::from("/"));
