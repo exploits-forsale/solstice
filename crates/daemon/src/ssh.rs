@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Seek;
 use std::io::Write;
@@ -9,7 +10,15 @@ use std::ptr::read;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use async_trait::async_trait;
+use portable_pty::native_pty_system;
+use portable_pty::CommandBuilder;
+use portable_pty::MasterPty;
+use portable_pty::PtyPair;
+use portable_pty::PtySize;
+use portable_pty::PtySystem;
+use portable_pty::SlavePty;
 use russh::server::Auth;
 use russh::server::Msg;
 use russh::server::Server as _;
@@ -19,18 +28,18 @@ use russh::ChannelId;
 use russh::CryptoVec;
 use russh::Pty;
 use russh_keys::key::KeyPair;
+use russh_keys::key::PublicKey;
 use tokio::sync::Mutex;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize, PtySystem, SlavePty};
 
 use crate::sftp::SftpSession;
 
-struct PtyStream{
+struct PtyStream {
     reader: Mutex<Box<dyn Read + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
-    slave: Mutex<Box<dyn SlavePty + Send>>
+    slave: Mutex<Box<dyn SlavePty + Send>>,
 }
 
 #[derive(Clone)]
@@ -49,7 +58,13 @@ impl russh::server::Server for Server {
     }
 }
 
-fn deserialize_authorized_keys(keydata: &str) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
+fn authorized_keys_path(config_dir: &PathBuf) -> PathBuf {
+    config_dir.join("authorized_keys")
+}
+
+fn deserialize_authorized_keys(
+    keydata: &str,
+) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
     let mut keys = Vec::new();
 
     for line in keydata.lines() {
@@ -72,25 +87,28 @@ fn deserialize_authorized_keys(keydata: &str) -> Result<Vec<russh_keys::key::Pub
     Ok(keys)
 }
 
-fn read_authorized_keys(config_dir: &PathBuf) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
-    let authorized_keys_path = config_dir.join("authorized_keys");
+fn read_authorized_keys(
+    config_dir: &PathBuf,
+) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
+    let authorized_keys_path = authorized_keys_path(config_dir);
 
     if !authorized_keys_path.exists() {
+        debug!("Creating authorized keys file");
+
         // Create the file and its parent directories if they don't exist
         if let Some(parent) = authorized_keys_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         std::fs::File::create(&authorized_keys_path)?;
     }
 
-    let mut file = fs::File::open(&authorized_keys_path)?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
+    debug!("Reading authorized keys");
+
+    let contents = std::fs::read_to_string(&authorized_keys_path)?;
 
     deserialize_authorized_keys(&contents)
 }
-
 
 struct SshSession {
     config_dir: PathBuf,
@@ -104,7 +122,7 @@ impl Default for SshSession {
             // FIXME: What would be a good default here?
             config_dir: "".into(),
             clients: Arc::new(Mutex::new(HashMap::new())),
-            ptys: Arc::new(Mutex::new(HashMap::new()))
+            ptys: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -113,6 +131,15 @@ impl SshSession {
     pub async fn get_channel(&mut self, channel_id: ChannelId) -> Channel<Msg> {
         let mut clients = self.clients.lock().await;
         clients.remove(&channel_id).unwrap()
+    }
+
+    fn add_authorized_key(&mut self, key: &PublicKey) -> anyhow::Result<()> {
+        let mut keys_file = OpenOptions::new()
+            .append(true)
+            .open(authorized_keys_path(&self.config_dir))?;
+        russh_keys::write_public_key_base64(&mut keys_file, key)?;
+
+        Ok(())
     }
 }
 
@@ -133,12 +160,30 @@ impl russh::server::Handler for SshSession {
         info!("credentials: {}, {:?}", user, public_key);
         let keys = read_authorized_keys(&self.config_dir)?;
 
+        if keys.is_empty() {
+            info!("No authorized keys have been added yet -- adding this key to the keystore");
+
+            if let Err(e) = self
+                .add_authorized_key(public_key)
+                .context("Could not add authorized key")
+            {
+                error!("{:?}", e);
+            } else {
+                // We presumably added the key fine, allow this person in
+                return Ok(Auth::Accept);
+            }
+        }
+
         if keys.contains(public_key) {
             info!("User {user} accepted via pubkey auth");
             return Ok(Auth::Accept);
         }
 
-        Ok(Auth::Reject { proceed_with_methods: (None) })
+        info!("Rejecting {user}");
+
+        Ok(Auth::Reject {
+            proceed_with_methods: (None),
+        })
     }
 
     async fn channel_open_session(
@@ -178,10 +223,10 @@ impl russh::server::Handler for SshSession {
         channel_id: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        info!("Requesting PTY");
 
         let handle_reader = session.handle();
         let handle_waiter = session.handle();
-
 
         let ptys = self.ptys.clone();
 
@@ -196,14 +241,18 @@ impl russh::server::Handler for SshSession {
                         let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
                         let mut reader = stream.reader.blocking_lock();
                         reader.read(&mut buffer).map(|n| (n, buffer))
-
-                    }).await {
+                    })
+                    .await
+                    {
                         Ok(Ok((n, buffer))) if n == 0 => {
                             debug!("PTY: No more data to read.");
                             break;
                         }
-                        Ok(Ok((n,buffer))) => {
-                            if let Err(e) = handle_reader.data(channel_id, CryptoVec::from_slice(&buffer[0..n])).await {
+                        Ok(Ok((n, buffer))) => {
+                            if let Err(e) = handle_reader
+                                .data(channel_id, CryptoVec::from_slice(&buffer[0..n]))
+                                .await
+                            {
                                 error!("Error sending PTY data to client: {:?}", e);
                                 break;
                             }
@@ -223,21 +272,30 @@ impl russh::server::Handler for SshSession {
             let child_status = tokio::task::spawn_blocking(move || {
                 let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
 
-                let mut child = stream.slave.blocking_lock().spawn_command(CommandBuilder::new(shell)).expect("Failed to spawn child process");
+                let mut child = stream
+                    .slave
+                    .blocking_lock()
+                    .spawn_command(CommandBuilder::new(shell))
+                    .expect("Failed to spawn child process");
                 child.wait().expect("Failed to wait on child process")
-            }).await;
+            })
+            .await;
 
             match child_status {
                 Ok(status) => {
                     if status.success() {
                         info!("Child process exited successfully.");
                         //reader_handle.abort();
-                        let _ = handle_waiter.exit_status_request(channel_id, status.exit_code()).await;
+                        let _ = handle_waiter
+                            .exit_status_request(channel_id, status.exit_code())
+                            .await;
                         let _ = handle_waiter.close(channel_id).await;
                     } else {
                         error!("Child process exited with status: {:?}", status);
                         //reader_handle.abort();
-                        let _ = handle_waiter.exit_status_request(channel_id, status.exit_code()).await;
+                        let _ = handle_waiter
+                            .exit_status_request(channel_id, status.exit_code())
+                            .await;
                         let _ = handle_waiter.close(channel_id).await;
                     }
                 }
@@ -262,7 +320,10 @@ impl russh::server::Handler for SshSession {
     ) -> Result<(), Self::Error> {
         info!("Requesting PTY!");
 
-        info!("PTY request received: term={}, col_width={}, row_height={}", term, col_width, row_height);
+        info!(
+            "PTY request received: term={}, col_width={}, row_height={}",
+            term, col_width, row_height
+        );
 
         let pty_system = native_pty_system();
         let pty_pair = pty_system.openpty(PtySize {
@@ -280,21 +341,19 @@ impl russh::server::Handler for SshSession {
         let mut master_writer = Mutex::new(master.take_writer().unwrap());
 
         let p = Mutex::new(master);
-        
 
-        self.ptys
-        .lock()
-        .await
-            .insert(channel_id, Arc::new(PtyStream {
+        self.ptys.lock().await.insert(
+            channel_id,
+            Arc::new(PtyStream {
                 reader: master_reader,
                 writer: master_writer,
-                slave: Mutex::new(slave)
-            }));
-        
+                slave: Mutex::new(slave),
+            }),
+        );
+
         session.request_success();
         Ok(())
     }
-
 
     async fn data(
         &mut self,
@@ -302,15 +361,12 @@ impl russh::server::Handler for SshSession {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-
         if let Some(pty_stream) = self.ptys.lock().await.get_mut(&channel_id) {
             let mut pty_writer = pty_stream.writer.lock().await;
 
-            pty_writer
-                .write_all(data)
-                .map_err(anyhow::Error::new)?;
+            pty_writer.write_all(data).map_err(anyhow::Error::new)?;
 
-            pty_writer.flush().map_err(anyhow::Error::new)?;    
+            pty_writer.flush().map_err(anyhow::Error::new)?;
         }
         Ok(())
     }
@@ -318,8 +374,7 @@ impl russh::server::Handler for SshSession {
 
 pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<KeyPair> {
     let ed25519_key_path = config_dir.join("ssh_host_ed25519_key");
-    if let Ok(secret_key) = russh_keys::load_secret_key(&ed25519_key_path, None)
-    {
+    if let Ok(secret_key) = russh_keys::load_secret_key(&ed25519_key_path, None) {
         return Ok(secret_key);
     }
 
@@ -349,7 +404,7 @@ pub async fn start_ssh_server(port: u16, config_dir: &PathBuf) -> std::io::Resul
     };
 
     let mut server = Server {
-        config_dir: config_dir.to_path_buf()
+        config_dir: config_dir.to_path_buf(),
     };
 
     let host = "0.0.0.0";
