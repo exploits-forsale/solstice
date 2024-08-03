@@ -94,6 +94,8 @@ impl russh_sftp::server::Handler for SftpSession {
         StatusCode::OpUnsupported
     }
 
+    /// The default is to send an SSH_FXP_VERSION response with
+    /// the protocol version and ignore any extensions.
     async fn init(
         &mut self,
         version: u32,
@@ -109,6 +111,8 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Version::new())
     }
 
+    /// Called on SSH_FXP_CLOSE.
+    /// The status can be returned as Ok or as Err
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
         let _ = self.handles.remove(&handle);
 
@@ -120,12 +124,15 @@ impl russh_sftp::server::Handler for SftpSession {
         })
     }
 
+    /// Called on SSH_FXP_OPENDIR
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         info!("opendir: {}", path);
         self.cur_dir = unix_like_path_to_windows_path(path.as_str());
         Ok(Handle { id, handle: path })
     }
 
+    /// Called on SSH_FXP_READDIR.
+    /// EOF error should be returned at the end of reading the directory
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         info!("readdir handle: {}", handle);
         debug!("self.root_dir_read_done = {}", self.root_dir_read_done);
@@ -205,6 +212,8 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Name { id, files: vec![] })
     }
 
+    /// Called on SSH_FXP_REALPATH.
+    /// Must contain only one name and a dummy attributes
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         info!("realpath: {}", path);
         if path == "." {
@@ -230,6 +239,7 @@ impl russh_sftp::server::Handler for SftpSession {
         })
     }
 
+    /// Called on SSH_FXP_OPEN
     async fn open(
         &mut self,
         id: u32,
@@ -270,6 +280,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_READ
     async fn read(
         &mut self,
         id: u32,
@@ -316,6 +327,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_WRITE
     async fn write(
         &mut self,
         id: u32,
@@ -347,6 +359,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_LSTAT
     async fn lstat(
         &mut self,
         id: u32,
@@ -383,6 +396,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_FSTAT
     async fn fstat(
         &mut self,
         id: u32,
@@ -407,6 +421,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_SETSTAT
     async fn setstat(
         &mut self,
         id: u32,
@@ -417,6 +432,7 @@ impl russh_sftp::server::Handler for SftpSession {
         Err(self.unimplemented())
     }
 
+    /// Called on SSH_FXP_FSETSTAT
     async fn fsetstat(
         &mut self,
         id: u32,
@@ -427,6 +443,8 @@ impl russh_sftp::server::Handler for SftpSession {
         Err(self.unimplemented())
     }
 
+    /// Called on SSH_FXP_REMOVE.
+    /// The status can be returned as Ok or as Err
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
         debug!("remove: {id} {filename}");
 
@@ -467,6 +485,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_MKDIR
     async fn mkdir(
         &mut self,
         id: u32,
@@ -508,6 +527,8 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_RMDIR.
+    /// The status can be returned as Ok or as Err
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
         debug!("rmdir: {id} {path}");
         if let Some(path) = unix_like_path_to_windows_path(&path) {
@@ -534,6 +555,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_STAT
     async fn stat(
         &mut self,
         id: u32,
@@ -564,6 +586,8 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_RENAME.
+    /// The status can be returned as Ok or as Err
     async fn rename(
         &mut self,
         id: u32,
@@ -605,6 +629,7 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_READLINK
     async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         debug!("readlink: {id} {path}");
         if let Some(path) = unix_like_path_to_windows_path(&path) {
@@ -641,6 +666,8 @@ impl russh_sftp::server::Handler for SftpSession {
         }
     }
 
+    /// Called on SSH_FXP_SYMLINK.
+    /// The status can be returned as Ok or as Err
     async fn symlink(
         &mut self,
         id: u32,
@@ -675,6 +702,10 @@ impl russh_sftp::server::Handler for SftpSession {
         Err(StatusCode::Failure)
     }
 
+    /// Called on SSH_FXP_EXTENDED.
+    /// The extension can return any packet, so it's not specific.
+    /// If the server does not recognize the `request' name
+    /// the server must respond with an SSH_FX_OP_UNSUPPORTED error
     async fn extended(
         &mut self,
         id: u32,
