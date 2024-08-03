@@ -1,6 +1,10 @@
 use anyhow::Result;
 use goblin::pe::PE;
-use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, NasmFormatter};
+use iced_x86::Decoder;
+use iced_x86::DecoderOptions;
+use iced_x86::Formatter;
+use iced_x86::Instruction;
+use iced_x86::NasmFormatter;
 use itertools::Itertools;
 use std::fs::File;
 use std::io::prelude::*;
@@ -43,6 +47,10 @@ fn main() -> Result<()> {
     std::fs::write(gs_network_path, gamescript_network_exploit.as_bytes())?;
 
     std::fs::copy(stage1_output, output_path.join("stage1.bin"))?;
+    std::fs::copy(
+        stage1_network_output,
+        output_path.join("stage1_network.bin"),
+    )?;
     std::fs::copy(stage2_output, output_path.join("stage2.bin"))?;
 
     println!("done! artifacts can be found in outputs/");
