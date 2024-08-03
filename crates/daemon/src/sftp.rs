@@ -42,6 +42,23 @@ pub(crate) struct SftpSession {
     cur_dir: Option<PathBuf>,
 }
 
+fn canonizalize_unix_path_name(path: &PathBuf) -> PathBuf {
+    let mut parts = vec![];
+    for part in path {
+        match part.to_str() {
+            Some(".") => continue,
+            Some("\\") => continue,
+            Some("..") => _ = parts.pop(),
+            Some(val) => parts.push(val),
+            None => {}
+        }
+    }
+
+    let res = String::from("/") + parts.join("/").as_str();
+    PathBuf::from(&res)
+}
+
+
 fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
     let parsed_path = Path::new(&unix_path);
 
@@ -666,5 +683,32 @@ impl russh_sftp::server::Handler for SftpSession {
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
         debug!("extended: {id} {request}");
         Err(self.unimplemented())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_canonicalize_path_name() {
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/")), PathBuf::from("/"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/..")), PathBuf::from("/"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/../..")), PathBuf::from("/"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C")), PathBuf::from("/C"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/")), PathBuf::from("/C"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/../..")), PathBuf::from("/"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users")), PathBuf::from("/C/users"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/")), PathBuf::from("/C/users"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/appdata/local/")), PathBuf::from("/C/users/appdata/local"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/appdata/local/../")), PathBuf::from("/C/users/appdata"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/..")), PathBuf::from("/C"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/../.")), PathBuf::from("/C"));
+            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/../C/users/.././.")), PathBuf::from("/C"));
+        }
     }
 }
