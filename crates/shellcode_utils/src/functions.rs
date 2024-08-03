@@ -4,6 +4,7 @@ use core::ffi::c_int;
 use core::ffi::c_void;
 
 use const_str::equal;
+use windows_sys::core::HRESULT;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Networking::WinSock::QOS;
 use windows_sys::Win32::Networking::WinSock::SOCKET;
@@ -71,7 +72,7 @@ pub type VirtualProtectFn = unsafe extern "system" fn(
     dwSize: usize,
     flNewProtect: u32,
     lpflOldProtect: *mut u32,
-) -> c_char;
+) -> HRESULT;
 pub type GetFileSizeFn = unsafe extern "system" fn(hFile: HANDLE, lpHighFileSize: *mut u32) -> u32;
 pub type CreateThreadFn = unsafe extern "system" fn(
     lpThreadAttributes: *const c_void,

@@ -28,9 +28,9 @@ struct Args {
 }
 
 #[repr(packed)]
-struct DynamicFile {
-    file_len: [u8; 4],
-    name_len: [u8; 4],
+pub struct DynamicFile {
+    pub file_len: [u8; 4],
+    pub name_len: [u8; 4],
 }
 
 fn start_file_listener() {
@@ -78,52 +78,54 @@ fn main() -> std::io::Result<()> {
     for stream in listener.incoming() {
         info!("Connection established!");
 
-        let stage2 = std::fs::read(&args.stage2)?;
         let mut stream = stream.unwrap();
 
-        info!("Sending stage2 len");
-        stream.write_all(&(stage2.len() as u32).to_be_bytes())?;
-        info!("Sending stage2");
-        stream.write_all(&stage2)?;
-
-        for (file_name, file_path) in [("run.exe", Some(&args.run)), ("srv.exe", args.srv.as_ref())]
-        {
+        for (file_name, file_path) in [
+            // STAGE2 MUST BE THE FIRST FILE SENT!!!
+            ("stage2.bin", Some(&args.stage2)),
+            ("run.exe", Some(&args.run)),
+            ("srv.exe", args.srv.as_ref()),
+        ] {
             if file_path.is_none() {
                 continue;
             }
 
             let file_path = file_path.unwrap();
 
-            info!("Sending {:?}'s metadata", file_path);
+            info!("Sending {:?} metadata", file_path);
             let file_contents = std::fs::read(file_path)?;
             let file = DynamicFile {
                 file_len: (file_contents.len() as u32).to_be_bytes(),
                 name_len: (file_name.len() as u32).to_be_bytes(),
             };
-            let file_as_byte_slice: &[u8] = unsafe {
+
+            let file_meta_as_byte_slice: &[u8] = unsafe {
                 core::slice::from_raw_parts(
                     core::mem::transmute::<_, *const u8>(&file),
                     core::mem::size_of_val(&file),
                 )
             };
 
-            stream.write_all(file_as_byte_slice)?;
+            stream.write_all(file_meta_as_byte_slice)?;
             stream.write_all(file_name.as_bytes())?;
             stream.write_all(&file_contents)?;
         }
+
+        info!("Sending file info terminator...");
 
         // Send the null terminator file
         let file = DynamicFile {
             file_len: [0u8; 4],
             name_len: [0u8; 4],
         };
-        let file_as_byte_slice: &[u8] = unsafe {
+
+        let file_meta_as_byte_slice: &[u8] = unsafe {
             core::slice::from_raw_parts(
                 core::mem::transmute::<_, *const u8>(&file),
                 core::mem::size_of_val(&file),
             )
         };
-        stream.write_all(file_as_byte_slice)?;
+        stream.write_all(file_meta_as_byte_slice)?;
 
         info!("Waiting for new connection...")
     }

