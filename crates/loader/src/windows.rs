@@ -23,44 +23,4 @@ pub(crate) mod ffi {
     use windows_sys::Win32::{self};
 
     use super::*;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        pub fn VirtualAlloc(
-            lpaddress: *const c_void,
-            dwsize: usize,
-            flallocationtype: VIRTUAL_ALLOCATION_TYPE,
-            flprotect: PAGE_PROTECTION_FLAGS,
-        ) -> *mut c_void;
-
-        pub fn VirtualProtect(
-            lpAddress: *const c_void,
-            dwSize: usize,
-            flNewProtect: u32,
-            lpflOldProtect: *mut u32,
-        ) -> c_char;
-
-        pub fn GetProcAddress(hmodule: *mut c_void, lpprocname: *const u8) -> *mut c_void;
-
-        pub fn LoadLibraryA(lplibfilename: *const u8) -> *mut c_void;
-
-        pub fn CreateThread(
-            lpThreadAttributes: *const c_void,
-            dwStackSize: usize,
-            lpStartAddress: *const c_void,
-            lpParameter: *const c_void,
-            dwCreationFlags: u32,
-            lpThreadId: *mut u32,
-        ) -> *mut c_void;
-
-        pub fn RtlAddFunctionTable(
-            FunctionTable: *const c_void,
-            EntryCount: u32,
-            BaseAddress: u64,
-        ) -> u32;
-
-        pub fn GetModuleHandleA(lpModuleName: *const i8) -> *mut c_void;
-
-        pub fn NtCurrentTeb() -> *mut Win32::System::Threading::TEB;
-    }
 }

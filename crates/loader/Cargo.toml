@@ -28,6 +28,10 @@ features = [
     "Win32_System_Memory",
     # For LDR_DATA_TABLE_ENTRY
     "Win32_System_WindowsProgramming",
+
+    # For imports in non-shellcode mode
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
 ]
 version = "0.52.0"
 default-features = false

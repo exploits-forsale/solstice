@@ -35,19 +35,19 @@ use shellcode_utils::prelude::VirtualProtectFn;
 use utils::detect_platform;
 
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::CreateThread;
+use windows_sys::Win32::System::Diagnostics::Debug::RtlAddFunctionTable;
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::GetModuleHandleA;
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleA;
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::GetProcAddress;
+use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::LoadLibraryA;
+use windows_sys::Win32::System::LibraryLoader::LoadLibraryA;
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::RtlAddFunctionTable;
+use windows_sys::Win32::System::Memory::VirtualAlloc;
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::VirtualAlloc;
+use windows_sys::Win32::System::Memory::VirtualProtect;
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::VirtualProtect;
+use windows_sys::Win32::System::Threading::CreateThread;
 
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_EXCEPTION;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_TLS;
@@ -322,11 +322,17 @@ pub unsafe fn reflective_loader(buffer: &[u8], image_name: Option<&[u16]>, args:
         fns: RuntimeFns {
             virtual_alloc: VirtualAlloc,
             virtual_protect: VirtualProtect,
-            get_proc_address_fn: GetProcAddress,
-            load_library_fn: LoadLibraryA,
+            get_proc_address_fn: unsafe {
+                core::mem::transmute(GetProcAddress as unsafe extern "system" fn(_, _) -> _)
+            },
+            load_library_fn: unsafe {
+                core::mem::transmute(LoadLibraryA as unsafe extern "system" fn(_) -> _)
+            },
             // TODO
             create_thread_fn: unsafe { core::mem::transmute(core::ptr::null::<CreateThreadFn>()) },
-            get_module_handle_fn: GetModuleHandleA,
+            get_module_handle_fn: unsafe {
+                core::mem::transmute(GetModuleHandleA as unsafe extern "system" fn(_) -> _)
+            },
             rtl_add_function_table_fn: None,
         },
     };
