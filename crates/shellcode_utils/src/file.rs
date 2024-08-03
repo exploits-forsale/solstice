@@ -1,18 +1,23 @@
 use core::alloc::Allocator;
 
 use alloc::boxed::Box;
+use windows_sys::Win32::Foundation::HANDLE;
+use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
-use crate::{
-    consts::CreateFileAccess,
-    functions::{CloseHandleFn, CreateFileAFn, GetFileSizeFn, ReadFileFn, VirtualAllocFn},
-    PVOID,
-};
+use crate::consts::CreateFileAccess;
+use crate::functions::CloseHandleFn;
+use crate::functions::CreateFileAFn;
+use crate::functions::GetFileSizeFn;
+use crate::functions::ReadFileFn;
+use crate::functions::VirtualAllocFn;
+use crate::LPCSTR;
+use crate::PVOID;
 
 pub struct FileReader<'a, A>
 where
     A: Allocator,
 {
-    file_handle: PVOID,
+    file_handle: HANDLE,
     funcs: &'a FileReaderFuncs,
     allocator: A,
 }
@@ -49,7 +54,7 @@ where
     /// read the file. The input `name` must be null terminated.
     #[inline(always)]
     pub fn open(
-        name: *const i8,
+        name: LPCSTR,
         funcs: &'a FileReaderFuncs,
         allocator: A,
     ) -> Result<Self, FileReaderError> {
@@ -65,7 +70,7 @@ where
             )
         };
 
-        if handle as usize == usize::MAX {
+        if handle == INVALID_HANDLE_VALUE {
             return Err(FileReaderError::OpenFailed);
         }
 

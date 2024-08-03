@@ -4,11 +4,14 @@
 
 use core::ffi::c_void;
 
-pub type BOOLEAN = u8;
-pub type HANDLE = *mut c_void;
+use windows_sys::core::PCSTR;
+use windows_sys::Win32::Foundation::BOOLEAN;
+use windows_sys::Win32::Foundation::HANDLE;
+
 pub type PVOID = *mut c_void;
 pub type ULONG = u32;
 pub type LPSTR = *mut i8;
+pub type LPCSTR = PCSTR;
 #[repr(C)]
 pub struct PEB {
     pub InheritedAddressSpace: BOOLEAN,
@@ -20,7 +23,6 @@ pub struct PEB {
     pub Ldr: *mut PEB_LDR_DATA,
     pub ProcessParameters: *mut RTL_USER_PROCESS_PARAMETERS,
 }
-pub type LPCSTR = *const i8;
 #[repr(C)]
 pub struct PEB_LDR_DATA {
     pub Length: ULONG,

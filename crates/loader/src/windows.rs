@@ -1,6 +1,7 @@
 #![allow(non_snake_case, non_camel_case_types)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
+use core::ffi::c_void;
 
 use windows_sys::Win32;
 
@@ -17,10 +18,9 @@ pub const IMAGE_ORDINAL_FLAG: usize = 0x80000000_00000000;
 
 #[cfg(not(feature = "shellcode_compat"))]
 pub(crate) mod ffi {
-    use windows_sys::Win32::{
-        self,
-        System::Memory::{PAGE_PROTECTION_FLAGS, VIRTUAL_ALLOCATION_TYPE},
-    };
+    use windows_sys::Win32::System::Memory::PAGE_PROTECTION_FLAGS;
+    use windows_sys::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE;
+    use windows_sys::Win32::{self};
 
     use super::*;
 
@@ -64,43 +64,3 @@ pub(crate) mod ffi {
         pub fn NtCurrentTeb() -> *mut Win32::System::Threading::TEB;
     }
 }
-
-pub type NtCurrentTebFn = unsafe extern "system" fn() -> *mut Win32::System::Threading::TEB;
-
-pub type VirtualAllocFn = unsafe extern "system" fn(
-    lpAddress: *const c_void,
-    dwSize: usize,
-    flAllocationType: u32,
-    flProtect: u32,
-) -> *mut c_void;
-
-pub type VirtualProtectFn = unsafe extern "system" fn(
-    lpAddress: *const c_void,
-    dwSize: usize,
-    flNewProtect: u32,
-    lpflOldProtect: *mut u32,
-) -> c_char;
-
-pub type GetProcAddressFn =
-    unsafe extern "system" fn(hModule: *mut c_void, name: *const u8) -> *mut c_void;
-pub type LoadLibraryAFn = unsafe extern "system" fn(lpFileName: *const u8) -> *mut c_void;
-
-pub type CreateThreadFn = unsafe extern "system" fn(
-    lpThreadAttributes: *const c_void,
-    dwStackSize: usize,
-    lpStartAddress: *const c_void,
-    lpParameter: *const c_void,
-    dwCreationFlags: u32,
-    lpThreadId: *mut u32,
-) -> *mut c_void;
-
-pub type ImageTlsCallbackFn =
-    unsafe extern "system" fn(dllHandle: *const c_void, reason: u32, reserved: *const c_void);
-
-pub type RtlAddFunctionTableFn = unsafe extern "system" fn(
-    FunctionTable: *const c_void,
-    EntryCount: u32,
-    BaseAddress: u64,
-) -> u32;
-
-pub type GetModuleHandleAFn = unsafe extern "system" fn(lpModuleName: *const i8) -> *mut c_void;

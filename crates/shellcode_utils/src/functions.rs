@@ -1,15 +1,20 @@
-use core::{
-    cell::LazyCell,
-    ffi::{c_char, c_int, c_void},
-};
+use core::cell::LazyCell;
+use core::ffi::c_char;
+use core::ffi::c_int;
+use core::ffi::c_void;
 
 use const_str::equal;
-use windows_sys::Win32::{
-    Networking::WinSock::{QOS, SOCKET, WSABUF, WSADATA, WSAPROTOCOL_INFOA},
-    System::Diagnostics::ToolHelp::THREADENTRY32,
-};
+use windows_sys::Win32::Foundation::HANDLE;
+use windows_sys::Win32::Networking::WinSock::QOS;
+use windows_sys::Win32::Networking::WinSock::SOCKET;
+use windows_sys::Win32::Networking::WinSock::WSABUF;
+use windows_sys::Win32::Networking::WinSock::WSADATA;
+use windows_sys::Win32::Networking::WinSock::WSAPROTOCOL_INFOA;
+use windows_sys::Win32::System::Diagnostics::ToolHelp::THREADENTRY32;
+use windows_sys::Win32::System::Threading::TEB;
 
-use crate::{binds::*, resolve_func};
+use crate::binds::*;
+use crate::resolve_func;
 
 #[repr(transparent)]
 struct CachedPtr<T, F = fn() -> T>(LazyCell<T, F>);
@@ -41,10 +46,10 @@ pub type CreateFileAFn = unsafe extern "system" fn(
     dwCreationDisposition: u32,
     dwFlagsAndATtributes: u32,
     hTemplateFile: PVOID,
-) -> PVOID;
+) -> HANDLE;
 pub type wsprintfaFn = unsafe extern "system" fn(outbuf: LPSTR, inbuf: LPCSTR, ...);
 pub type ReadFileFn = unsafe extern "system" fn(
-    hFile: PVOID,
+    hFile: HANDLE,
     lpBuf: PVOID,
     nNumberOfBytesToRead: u32,
     lpNumberOfBytesRead: *mut u32,
@@ -67,7 +72,7 @@ pub type VirtualProtectFn = unsafe extern "system" fn(
     flNewProtect: u32,
     lpflOldProtect: *mut u32,
 ) -> c_char;
-pub type GetFileSizeFn = unsafe extern "system" fn(hFile: PVOID, lpHighFileSize: *mut u32) -> u32;
+pub type GetFileSizeFn = unsafe extern "system" fn(hFile: HANDLE, lpHighFileSize: *mut u32) -> u32;
 pub type CreateThreadFn = unsafe extern "system" fn(
     lpThreadAttributes: *const c_void,
     dwStackSize: usize,
@@ -83,7 +88,7 @@ pub type RtlAddFunctionTableFn = unsafe extern "system" fn(
     BaseAddress: u64,
 ) -> u32;
 
-pub type CloseHandleFn = unsafe extern "system" fn(hObject: PVOID);
+pub type CloseHandleFn = unsafe extern "system" fn(hObject: HANDLE);
 
 pub type ExpandEnvironmentStringsAFn =
     unsafe extern "system" fn(lpSrc: *const u8, lpDst: *mut u8, size: u32) -> u32;
@@ -117,7 +122,7 @@ pub type WSAConnectFn = unsafe extern "system" fn(
 );
 
 pub type WriteFileFn = unsafe extern "system" fn(
-    hFile: PVOID,
+    hFile: HANDLE,
     lpBuffer: *const c_void,
     nNumberOfBytesToWrite: u32,
     lpNumberOfBytesWritten: *mut u32,
@@ -142,6 +147,11 @@ pub type Thread32NextFn =
     unsafe extern "system" fn(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> c_int;
 pub type Thread32FirstFn =
     unsafe extern "system" fn(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> c_int;
+
+pub type NtCurrentTebFn = unsafe extern "system" fn() -> *mut TEB;
+
+pub type ImageTlsCallbackFn =
+    unsafe extern "system" fn(dllHandle: *const c_void, reason: u32, reserved: *const c_void);
 
 // pub fn get_kernel32_test() -> PVOID {
 //     static KERNEL32: CachedPtr<PVOID> = CachedPtr::new(|| {
@@ -202,8 +212,7 @@ pub fn get_kernel32(kernelbase_ptr: PVOID) -> Option<PVOID> {
 
     crate::get_module_by_name(KERNEL32_STR.as_ptr()).or_else(|| {
         let kernel32 = concat!("kernel32.dll", "\0");
-        let kernel32_ptr =
-            unsafe { (fetch_load_library(kernelbase_ptr))(kernel32.as_ptr() as *const _) };
+        let kernel32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(kernel32.as_ptr()) };
         if kernel32_ptr.is_null() {
             None
         } else {
@@ -221,8 +230,7 @@ pub fn get_kernel32_legacy(kernelbase_ptr: PVOID) -> Option<PVOID> {
 
     crate::get_module_by_name(KERNEL32_STR.as_ptr()).or_else(|| {
         let kernel32 = concat!("kernel32legacy.dll", "\0");
-        let kernel32_ptr =
-            unsafe { (fetch_load_library(kernelbase_ptr))(kernel32.as_ptr() as *const _) };
+        let kernel32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(kernel32.as_ptr()) };
         if kernel32_ptr.is_null() {
             None
         } else {
@@ -267,8 +275,7 @@ pub fn fetch_ws2_32(kernelbase_ptr: PVOID) -> Option<PVOID> {
 
     crate::get_module_by_name(WS2_32_WSTR.as_ptr()).or_else(|| {
         let ws2_32_str = concat!("WS2_32.dll", "\0");
-        let ws2_32_ptr =
-            unsafe { (fetch_load_library(kernelbase_ptr))(ws2_32_str.as_ptr() as *const _) };
+        let ws2_32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(ws2_32_str.as_ptr()) };
         if ws2_32_ptr.is_null() {
             None
         } else {
@@ -279,10 +286,9 @@ pub fn fetch_ws2_32(kernelbase_ptr: PVOID) -> Option<PVOID> {
 
 pub fn get_user32(kernelbase_ptr: PVOID) -> PVOID {
     let user32 = concat!("user32.dll", "\0");
-    let mut u32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(user32.as_ptr() as *const _) };
+    let mut u32_ptr = unsafe { (fetch_load_library(kernelbase_ptr))(user32.as_ptr()) };
     if u32_ptr.is_null() {
-        u32_ptr =
-            unsafe { (fetch_get_module_handle(kernelbase_ptr))(user32.as_ptr() as *const i8) };
+        u32_ptr = unsafe { (fetch_get_module_handle(kernelbase_ptr))(user32.as_ptr()) };
     }
 
     u32_ptr

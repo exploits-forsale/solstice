@@ -32,5 +32,8 @@ features = [
 version = "0.52.0"
 default-features = false
 
+[dependencies.shellcode_utils]
+path = "../shellcode_utils"
+
 [features]
 shellcode_compat = []

@@ -12,37 +12,59 @@ pub mod test;
 pub mod utils;
 pub mod windows;
 
-use pelib::{
-    fix_base_relocations, fix_section_permissions, get_dos_header, get_headers_size,
-    get_image_size, get_nt_header, patch_kernelbase, patch_module_list, patch_peb, teb,
-    write_import_table, write_sections,
-};
+use pelib::fix_base_relocations;
+use pelib::fix_section_permissions;
+use pelib::get_dos_header;
+use pelib::get_headers_size;
+use pelib::get_image_size;
+use pelib::get_nt_header;
+use pelib::patch_kernelbase;
+use pelib::patch_module_list;
+use pelib::patch_peb;
+use pelib::teb;
+use pelib::write_import_table;
+use pelib::write_sections;
+use shellcode_utils::prelude::CreateThreadFn;
+use shellcode_utils::prelude::GetModuleHandleAFn;
+use shellcode_utils::prelude::GetProcAddressFn;
+use shellcode_utils::prelude::ImageTlsCallbackFn;
+use shellcode_utils::prelude::LoadLibraryAFn;
+use shellcode_utils::prelude::RtlAddFunctionTableFn;
+use shellcode_utils::prelude::VirtualAllocFn;
+use shellcode_utils::prelude::VirtualProtectFn;
 use utils::detect_platform;
 
 #[cfg(not(feature = "shellcode_compat"))]
-use windows::ffi::{
-    CreateThread, GetModuleHandleA, GetProcAddress, LoadLibraryA, RtlAddFunctionTable,
-    VirtualAlloc, VirtualProtect,
-};
+use windows::ffi::CreateThread;
+#[cfg(not(feature = "shellcode_compat"))]
+use windows::ffi::GetModuleHandleA;
+#[cfg(not(feature = "shellcode_compat"))]
+use windows::ffi::GetProcAddress;
+#[cfg(not(feature = "shellcode_compat"))]
+use windows::ffi::LoadLibraryA;
+#[cfg(not(feature = "shellcode_compat"))]
+use windows::ffi::RtlAddFunctionTable;
+#[cfg(not(feature = "shellcode_compat"))]
+use windows::ffi::VirtualAlloc;
+#[cfg(not(feature = "shellcode_compat"))]
+use windows::ffi::VirtualProtect;
 
-use windows::{
-    CreateThreadFn, GetModuleHandleAFn, GetProcAddressFn, ImageTlsCallbackFn, LoadLibraryAFn,
-    RtlAddFunctionTableFn, VirtualAllocFn, VirtualProtectFn,
-};
-use windows_sys::Win32::System::{
-    Diagnostics::Debug::{
-        IMAGE_DIRECTORY_ENTRY_EXCEPTION, IMAGE_DIRECTORY_ENTRY_TLS, IMAGE_NT_HEADERS32,
-        IMAGE_NT_HEADERS64, IMAGE_RUNTIME_FUNCTION_ENTRY,
-    },
-    Memory::{MEM_COMMIT, PAGE_READWRITE},
-    SystemServices::{DLL_PROCESS_ATTACH, DLL_THREAD_ATTACH, IMAGE_TLS_DIRECTORY64},
-};
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_EXCEPTION;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_TLS;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS32;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_RUNTIME_FUNCTION_ENTRY;
+use windows_sys::Win32::System::Memory::MEM_COMMIT;
+use windows_sys::Win32::System::Memory::PAGE_READWRITE;
+use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
+use windows_sys::Win32::System::SystemServices::DLL_THREAD_ATTACH;
+use windows_sys::Win32::System::SystemServices::IMAGE_TLS_DIRECTORY64;
 
-use core::{
-    arch,
-    ffi::{c_char, c_int, c_void},
-    ptr,
-};
+use core::arch;
+use core::ffi::c_char;
+use core::ffi::c_int;
+use core::ffi::c_void;
+use core::ptr;
 
 #[used]
 #[no_mangle]

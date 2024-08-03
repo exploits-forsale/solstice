@@ -1,31 +1,38 @@
 use core::ffi::c_void;
 
-use windows_sys::Win32::{
-    self,
-    Foundation::UNICODE_STRING,
-    System::{
-        Diagnostics::Debug::{
-            IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_IMPORT,
-            IMAGE_DIRECTORY_ENTRY_TLS, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64,
-            IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER,
-        },
-        Kernel::LIST_ENTRY,
-        Memory::{
-            PAGE_EXECUTE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY,
-            PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
-        },
-        SystemServices::{
-            IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_IMPORT_DESCRIPTOR, IMAGE_TLS_DIRECTORY64,
-        },
-        Threading::PEB,
-        WindowsProgramming::LDR_DATA_TABLE_ENTRY,
-    },
-};
+use shellcode_utils::prelude::GetModuleHandleAFn;
+use shellcode_utils::prelude::GetProcAddressFn;
+use shellcode_utils::prelude::LoadLibraryAFn;
+use shellcode_utils::prelude::VirtualProtectFn;
+use windows_sys::Win32::Foundation::UNICODE_STRING;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DATA_DIRECTORY;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_BASERELOC;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_IMPORT;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_TLS;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS32;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_SCN_MEM_EXECUTE;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_SCN_MEM_READ;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_SCN_MEM_WRITE;
+use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_SECTION_HEADER;
+use windows_sys::Win32::System::Kernel::LIST_ENTRY;
+use windows_sys::Win32::System::Memory::PAGE_EXECUTE;
+use windows_sys::Win32::System::Memory::PAGE_EXECUTE_READ;
+use windows_sys::Win32::System::Memory::PAGE_EXECUTE_READWRITE;
+use windows_sys::Win32::System::Memory::PAGE_EXECUTE_WRITECOPY;
+use windows_sys::Win32::System::Memory::PAGE_NOACCESS;
+use windows_sys::Win32::System::Memory::PAGE_READONLY;
+use windows_sys::Win32::System::Memory::PAGE_READWRITE;
+use windows_sys::Win32::System::SystemServices::IMAGE_BASE_RELOCATION;
+use windows_sys::Win32::System::SystemServices::IMAGE_DOS_HEADER;
+use windows_sys::Win32::System::SystemServices::IMAGE_IMPORT_DESCRIPTOR;
+use windows_sys::Win32::System::SystemServices::IMAGE_TLS_DIRECTORY64;
+use windows_sys::Win32::System::Threading::PEB;
+use windows_sys::Win32::System::WindowsProgramming::LDR_DATA_TABLE_ENTRY;
+use windows_sys::Win32::{self};
 
-use crate::windows::{
-    GetModuleHandleAFn, GetProcAddressFn, LoadLibraryAFn, VirtualAllocFn, VirtualProtectFn,
-    IMAGE_NT_SIGNATURE, IMAGE_ORDINAL_FLAG,
-};
+use crate::windows::IMAGE_NT_SIGNATURE;
+use crate::windows::IMAGE_ORDINAL_FLAG;
 
 /// Function to get the size of the headers
 ///
