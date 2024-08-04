@@ -23,23 +23,62 @@ use tracing::debug;
 use tracing::error;
 use tracing::info;
 
+struct FileEx {
+    filename: String,
+    attrs: FileAttributes,
+}
+
+impl Into<File> for FileEx {
+    fn into(self) -> File {
+        let mut f = File {
+            filename: self.filename,
+            longname: String::new(),
+            attrs: self.attrs
+        };
+        f.longname = f.longname();
+        f
+    }
+}
+
+enum OurHandle {
+    File(tokio::fs::File),
+    // Bool marks whether the dir has been read yet
+    // false if not read, true if EOF was returned to consumer
+    Dir(bool),
+}
+
 struct InternalHandle {
-    path: PathBuf,
-    file: Option<tokio::fs::File>,
+    pub path: PathBuf,
+    pub handle: OurHandle,
 }
 
 impl InternalHandle {
+    pub fn new_dir(path: &PathBuf) -> Self {
+        Self {
+            path: path.to_owned(),
+            handle: OurHandle::Dir(false),
+        }
+    }
+
     fn file(&mut self) -> Result<&mut tokio::fs::File, StatusCode> {
-        self.file.as_mut().ok_or(StatusCode::Failure)
+        match &mut self.handle {
+            OurHandle::File(f) => Ok(f),
+            _ => Err(StatusCode::NoSuchFile),
+        }
+    }
+
+    fn directory(&mut self) -> Result<&mut bool, StatusCode> {
+        match &mut self.handle {
+            OurHandle::Dir(status) => Ok(status),
+            _ => Err(StatusCode::NoSuchFile),
+        }
     }
 }
 
 #[derive(Default)]
 pub(crate) struct SftpSession {
     version: Option<u32>,
-    root_dir_read_done: bool,
     handles: HashMap<String, InternalHandle>,
-    cur_dir: Option<PathBuf>,
 }
 
 fn canonizalize_unix_path_name(path: &PathBuf) -> PathBuf {
@@ -117,6 +156,7 @@ impl russh_sftp::server::Handler for SftpSession {
     /// Called on SSH_FXP_CLOSE.
     /// The status can be returned as Ok or as Err
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
+        info!("close: {} {}", id, handle);
         let _ = self.handles.remove(&handle);
 
         Ok(Status {
@@ -129,8 +169,9 @@ impl russh_sftp::server::Handler for SftpSession {
 
     /// Called on SSH_FXP_OPENDIR
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
-        info!("opendir: {}", path);
-        self.cur_dir = unix_like_path_to_windows_path(path.as_str());
+        info!("opendir: {}", &path);
+        let pathbuf = PathBuf::from(&path);
+        self.handles.insert(path.clone(), InternalHandle::new_dir(&pathbuf));
         Ok(Handle { id, handle: path })
     }
 
@@ -138,98 +179,107 @@ impl russh_sftp::server::Handler for SftpSession {
     /// EOF error should be returned at the end of reading the directory
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         info!("readdir handle: {}", handle);
-        debug!("self.root_dir_read_done = {}", self.root_dir_read_done);
 
-        if !self.root_dir_read_done {
-            self.root_dir_read_done = true;
+        let dir_read_done = self.handles
+            .get_mut(&handle)
+            .ok_or(StatusCode::NoSuchFile)?
+            .directory()?;
 
-            if handle == "/" {
-                let mut drives = Vec::with_capacity(26);
-                let assigned_letters =
-                    unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
-
-                for i in 0..27 {
-                    if assigned_letters & (1 << i) != 0 {
-                        let mount = ('A' as u8 + i) as char;
-                        let mut attrs = FileAttributes::default();
-                        attrs.set_dir(true);
-
-                        drives.push(File {
-                            filename: String::from(mount),
-                            longname: format!("/{}", mount),
-                            attrs,
-                        });
-                    }
-                }
-
-                info!("returning: {:?}", drives);
-                return Ok(Name { id, files: drives });
-            }
-
-            match unix_like_path_to_windows_path(&handle) {
-                Some(path) if path.exists() => {
-                    let files = path
-                        .read_dir()
-                        .context("read_dir")
-                        .map_err(|e| {
-                            error!("{:?}", e);
-                            // TODO: Proper error code
-                            StatusCode::PermissionDenied
-                        })?
-                        .map(|file| {
-                            let file = file.context("file dir_entry").map_err(|e| {
-                                error!("{:?}", e);
-                                StatusCode::PermissionDenied
-                            })?;
-                            let name = file.file_name().to_string_lossy().into_owned();
-
-                            if let Ok(metadata) = file
-                                .metadata()
-                                .context("readdir metadata")
-                                .map_err(|e| error!("{:?}", e))
-                            {
-                                Ok(File {
-                                    filename: name.clone(),
-                                    longname: name,
-                                    attrs: (&metadata).into(),
-                                })
-                            } else {
-                                // TODO
-                                Ok(File {
-                                    filename: name.clone(),
-                                    longname: name,
-                                    attrs: FileAttributes::default(),
-                                })
-                            }
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-
-                    return Ok(Name { id, files });
-                }
-                _ => return Err(StatusCode::NoSuchFile),
-            }
+        if *dir_read_done {
+            debug!("Dir {} read already - returning EOF", handle);
+            return Err(StatusCode::Eof);
         }
 
-        self.root_dir_read_done = false;
+        // Mark dir as read
+        *dir_read_done = true;
 
-        Ok(Name { id, files: vec![] })
+        if handle == "/" {
+            let mut drives = Vec::with_capacity(26);
+            let assigned_letters =
+                unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
+
+            for i in 0..27 {
+                if assigned_letters & (1 << i) != 0 {
+                    let mount = ('A' as u8 + i) as char;
+                    let mut attrs = FileAttributes::default();
+                    attrs.set_dir(true);
+
+                    drives.push(FileEx {
+                        filename: String::from(mount),
+                        attrs,
+                    }.into());
+                }
+            }
+
+            info!("returning: {:?}", drives);
+            return Ok(Name { id, files: drives });
+        }
+
+        match unix_like_path_to_windows_path(&handle) {
+            Some(path) if path.exists() => {
+                let files = path
+                    .read_dir()
+                    .context("read_dir")
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        // TODO: Proper error code
+                        StatusCode::PermissionDenied
+                    })?
+                    .map(|file| {
+                        let file = file.context("file dir_entry").map_err(|e| {
+                            error!("{:?}", e);
+                            StatusCode::PermissionDenied
+                        })?;
+                        let name = file.file_name().to_string_lossy().into_owned();
+
+                        if let Ok(metadata) = file
+                            .metadata()
+                            .context("readdir metadata")
+                            .map_err(|e| error!("{:?}", e))
+                        {
+                            Ok(FileEx {
+                                filename: name.clone(),
+                                attrs: (&metadata).into(),
+                            }.into())
+                        } else {
+                            // TODO
+                            Ok(FileEx {
+                                filename: name.clone(),
+                                attrs: FileAttributes::default(),
+                            }.into())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                return Ok(Name { id, files });
+            }
+            _ => {
+                error!("readdir: File not found");
+                return Err(StatusCode::NoSuchFile)
+            },
+        }
     }
 
     /// Called on SSH_FXP_REALPATH.
     /// Must contain only one name and a dummy attributes
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         info!("realpath: {}", path);
-        let normalized = canonizalize_unix_path_name(&PathBuf::from(path));
-        debug!("realpath: returning: {normalized:?}");
+        let normalized = canonizalize_unix_path_name(&PathBuf::from(&path));
         let mut attrs = FileAttributes::default();
-        attrs.set_dir(true);
+
+        if let Some(winpath) = unix_like_path_to_windows_path(&path) {
+            if let Ok(metadata) = winpath.metadata() {
+                attrs = (&metadata).into();
+            }
+        }
+        debug!("realpath: returning: {normalized:?}");
+
         Ok(Name {
             id,
-            files: vec![File {
+            files: vec![FileEx {
                 filename: normalized.to_string_lossy().to_string(),
-                longname: normalized.to_string_lossy().to_string(),
                 attrs: attrs,
-            }],
+            }.into()],
         })
     }
 
@@ -261,7 +311,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 filename.clone(),
                 InternalHandle {
                     path,
-                    file: Some(file),
+                    handle: OurHandle::File(file),
                 },
             );
 
@@ -640,18 +690,17 @@ impl russh_sftp::server::Handler for SftpSession {
             {
                 Ok(file) => {
                     let metadata = &file.metadata().unwrap();
-                    let filename = file.to_string_lossy().to_owned();
+                    let filename = file.file_name().unwrap_or(std::ffi::OsStr::new("/")).to_string_lossy().to_owned();
                     Ok(Name {
                         id,
-                        files: vec![File {
+                        files: vec![FileEx {
                             filename: filename.to_string(),
-                            longname: filename.to_string(),
                             attrs: metadata.into()
-                        }]
+                        }.into()]
                     })
                 },
                 Err(e) => {
-                    error!("reading link: {e:?}");
+                    error!("failed reading link, path={path:?} error={e:?}");
                     Err(StatusCode::Failure)
                 }
             }
