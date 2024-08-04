@@ -76,9 +76,13 @@ fn deserialize_authorized_keys(
         // Skip over pubkey prefix
         split.next();
 
-        let public_key = russh_keys::parse_public_key_base64(split.next().unwrap())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        keys.push(public_key);
+        if let Some(pubkey) = split.next() {
+            if let Ok(parsed_key) = russh_keys::parse_public_key_base64(pubkey) {
+                keys.push(parsed_key);
+            } else {
+                info!("Ignoring authorized_key line: {line}");
+            }
+        }
     }
 
     Ok(keys)
@@ -425,7 +429,13 @@ mod tests {
         ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLHQEZWhL+IUEDghyVkDy81piOgZ8bQ7+Jso+gigCHmq0Qq4Liv8LqNxvk/qBS8PdHfyZVIaLhJb2bsXzm5qQaA= othername
         ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaIg9xwd9czg0A8Tar2iL71X4WWN0oermPA1PO49kqY
         ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaIg9xwd9czg0A8Tar2iL71X4WWN0oermPA1PO49kqY user@host.com
+        ssh-dss AAAAB3NzaC1kc3MAAACBANyhZYCr5UGcg70AMbFhdtVBdRfE3Q1NuJC2uWGPYSywFnirux0B/l6BEepGYH2x7+nJ6B4wioRFB92I7KVD6XlCGvtAg5hydoG01ZOdLSeszmjLXqJ7rgof0Q7x87c9fFBf94Z2GUM5PSAENMpp9eThhNfZw2jUobfCZuUrFtojAAAAFQDG5HzFLq1tfosxZ968XuCRZl5l4QAAAIBT+YCdF2l8Fqeodl6pWmmeVaMXRrw4oWFEty/t2JwmaCR1zaJAx56uUTb0SrRMjZmCr8qflBIK4ji25ixxa6MTLvfTxu3YMFWGq/CVai+vh+x/2UbSP/e65fQOH/pximML+AbY1y5Mnw5tZbcUiTsWWu5BtEZzbQDprsAbTpTU/AAAAIBfiQ5zUtvHqOdpCkdTEmn0J5jPukaCfpWqRBWttKrkVS2Qx0LKoX3/iNR2b4e0U5UTkihYAQ5taQDg96hdYMW16Hnoal0v/puL+WRN58UWdFLR0jkzToLyfuCdarhE4xUAl5y4KaldPC69Bl6X53wGKf/joEmvNPZ6ZvucBpyBDw==
+        ssh-dss AAAAB3NzaC1kc3MAAACBANyhZYCr5UGcg70AMbFhdtVBdRfE3Q1NuJC2uWGPYSywFnirux0B/l6BEepGYH2x7+nJ6B4wioRFB92I7KVD6XlCGvtAg5hydoG01ZOdLSeszmjLXqJ7rgof0Q7x87c9fFBf94Z2GUM5PSAENMpp9eThhNfZw2jUobfCZuUrFtojAAAAFQDG5HzFLq1tfosxZ968XuCRZl5l4QAAAIBT+YCdF2l8Fqeodl6pWmmeVaMXRrw4oWFEty/t2JwmaCR1zaJAx56uUTb0SrRMjZmCr8qflBIK4ji25ixxa6MTLvfTxu3YMFWGq/CVai+vh+x/2UbSP/e65fQOH/pximML+AbY1y5Mnw5tZbcUiTsWWu5BtEZzbQDprsAbTpTU/AAAAIBfiQ5zUtvHqOdpCkdTEmn0J5jPukaCfpWqRBWttKrkVS2Qx0LKoX3/iNR2b4e0U5UTkihYAQ5taQDg96hdYMW16Hnoal0v/puL+WRN58UWdFLR0jkzToLyfuCdarhE4xUAl5y4KaldPC69Bl6X53wGKf/joEmvNPZ6ZvucBpyBDw== user@host.com
+        ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCqjfB7ULpstUGnwIz0L6Tywf1jlfOVW0F4wOsZW7QoF4co6HXrcMTAUPN2KxspMJmTb4vYZHoEwA/OXGM5VxJ6dFW5JGTuxam3Ee+XnO/jtEWgAMIffu6ATeuqnqyODucgM6srvQBItSLUK8hLqnYgURA7dtnvSAorHlQbKzUpNVdr+nfx7bSTFltOahk8CBPV8CdNP6jpQW0RQJu92XRCd9ncB/vUr3+Ho64G++OFLUuNjB4dAEUoopYYbTc1g/6v5oHjkLjQ2I+kP/fzkcLgarucB7pnO3vva+L0s2lOJG0AZh+rIdD+N06lGkx8D8Bpjxx65wWDJDUeEL6ubjjrAzcwE7l11wGquJ8H1arPNbPcKgbQF8AJ920potBSvGUXXKi+K9KGL4VihH6Sv1fDcSU12H12JRd5N5p0e0fWZFCED1OoQJQc0PfWSsHhdJET6swP6ce8XHi8lyGF7QYMG51e8oNiGEHGQcicpqJNBev0w/BHl1E2QMUExeaEI6k=
+        ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCqjfB7ULpstUGnwIz0L6Tywf1jlfOVW0F4wOsZW7QoF4co6HXrcMTAUPN2KxspMJmTb4vYZHoEwA/OXGM5VxJ6dFW5JGTuxam3Ee+XnO/jtEWgAMIffu6ATeuqnqyODucgM6srvQBItSLUK8hLqnYgURA7dtnvSAorHlQbKzUpNVdr+nfx7bSTFltOahk8CBPV8CdNP6jpQW0RQJu92XRCd9ncB/vUr3+Ho64G++OFLUuNjB4dAEUoopYYbTc1g/6v5oHjkLjQ2I+kP/fzkcLgarucB7pnO3vva+L0s2lOJG0AZh+rIdD+N06lGkx8D8Bpjxx65wWDJDUeEL6ubjjrAzcwE7l11wGquJ8H1arPNbPcKgbQF8AJ920potBSvGUXXKi+K9KGL4VihH6Sv1fDcSU12H12JRd5N5p0e0fWZFCED1OoQJQc0PfWSsHhdJET6swP6ce8XHi8lyGF7QYMG51e8oNiGEHGQcicpqJNBev0w/BHl1E2QMUExeaEI6k= solstice@host.us
         "#;
+        // Only supporting ED25519 and ECDSA-SHA2-NISTP256
+        // DSS or RSA is not parsed successfully in this case
         assert_eq!(4, deserialize_authorized_keys(keydata).unwrap().len());
     }
 }
