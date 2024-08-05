@@ -129,6 +129,17 @@ fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
     }
 }
 
+impl SftpSession {
+    fn success(&self, id: u32) -> Status {
+        Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        }
+    }
+}
+
 #[async_trait]
 impl russh_sftp::server::Handler for SftpSession {
     type Error = StatusCode;
@@ -160,12 +171,7 @@ impl russh_sftp::server::Handler for SftpSession {
         info!("close: {} {}", id, handle);
         let _ = self.handles.remove(&handle);
 
-        Ok(Status {
-            id,
-            status_code: StatusCode::Ok,
-            error_message: "Ok".to_string(),
-            language_tag: "en-US".to_string(),
-        })
+        Ok(self.success(id))
     }
 
     /// Called on SSH_FXP_OPENDIR
@@ -528,12 +534,7 @@ impl russh_sftp::server::Handler for SftpSession {
                         error!("creating dir: {:?}", e);
                         Err(StatusCode::Failure)
                     } else {
-                        Ok(Status {
-                            id,
-                            status_code: StatusCode::Ok,
-                            error_message: "Ok".to_string(),
-                            language_tag: "en-US".to_string(),
-                        })
+                        Ok(self.success(id))
                     }
                 },
                 _ => Err(StatusCode::PermissionDenied),
@@ -563,12 +564,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 error!("deleting dir: {:?}", e);
                 Err(StatusCode::Failure)
             } else {
-                Ok(Status {
-                    id,
-                    status_code: StatusCode::Ok,
-                    error_message: "Ok".to_string(),
-                    language_tag: "en-US".to_string(),
-                })
+                Ok(self.success(id))
             }
         } else {
             Err(StatusCode::NoSuchFile)
@@ -633,12 +629,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     error!("renaming dir/file: {:?}", e);
                     Err(StatusCode::OpUnsupported)
                 } else {
-                    Ok(Status {
-                        id,
-                        status_code: StatusCode::Ok,
-                        error_message: "Ok".to_string(),
-                        language_tag: "en-US".to_string(),
-                    })
+                    Ok(self.success(id))
                 }
             }
             else {
@@ -704,12 +695,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .await
                     .context("creating link")
                 {
-                    Ok(_) => return Ok(Status {
-                        id,
-                        status_code: StatusCode::Ok,
-                        error_message: "Ok".to_string(),
-                        language_tag: "en-US".to_string(),
-                    }),
+                    Ok(_) => return Ok(self.success(id)),
                     Err(e) => {
                         error!("reading link: {e:?}");
                         return Err(StatusCode::Failure);
