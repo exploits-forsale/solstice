@@ -22,6 +22,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 struct FileEx {
     filename: String,
@@ -489,43 +490,23 @@ impl russh_sftp::server::Handler for SftpSession {
 
     /// Called on SSH_FXP_REMOVE.
     /// The status can be returned as Ok or as Err
-    async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
-        debug!("remove: {id} {filename}");
-
-        if let Some(path) = unix_like_path_to_windows_path(&filename) {
-            match path.parent() {
-                Some(path)
-                    if path
-                        .file_name()
-                        .expect("path has no filename?")
-                        .to_string_lossy()
-                        == "/" =>
-                {
-                    Err(StatusCode::PermissionDenied)
+    async fn remove(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
+        debug!("remove: {id} {path}");
+        match unix_like_path_to_windows_path(&path) {
+            Some(path) if path.is_file() => {
+                debug!("remove: file {path:?}");
+                if let Err(e) = tokio::fs::remove_file(path).await.context("removing file") {
+                    error!("{:?}", e);
+                    Err(StatusCode::Failure)
+                } else {
+                    Err(StatusCode::Ok)
                 }
-                Some(path) if path.is_dir() => {
-                    if let Err(e) = tokio::fs::remove_dir_all(path)
-                        .await
-                        .context("removing dir")
-                    {
-                        error!("{:?}", e);
-                        Err(StatusCode::Failure)
-                    } else {
-                        Err(StatusCode::Ok)
-                    }
-                }
-                Some(path) => {
-                    if let Err(e) = tokio::fs::remove_file(path).await.context("removing file") {
-                        error!("{:?}", e);
-                        Err(StatusCode::Failure)
-                    } else {
-                        Err(StatusCode::Ok)
-                    }
-                }
-                None => Err(StatusCode::NoSuchFile),
+            },
+            Some(path) => {
+                debug!("remove: permission denied {path:?}");
+                Err(StatusCode::PermissionDenied)
             }
-        } else {
-            Err(StatusCode::NoSuchFile)
+            None => Err(StatusCode::NoSuchFile),
         }
     }
 
@@ -555,7 +536,7 @@ impl russh_sftp::server::Handler for SftpSession {
                         })
                     }
                 },
-                _ => Err(StatusCode::NoSuchFile),
+                _ => Err(StatusCode::PermissionDenied),
             }
         } else {
             Err(StatusCode::NoSuchFile)
@@ -569,6 +550,10 @@ impl russh_sftp::server::Handler for SftpSession {
         if let Some(path) = unix_like_path_to_windows_path(&path) {
             if !path.exists() || !path.is_dir() {
                 return Err(StatusCode::NoSuchFile);
+            }
+
+            if path.components().count() <= 2 {
+                return Err(StatusCode::PermissionDenied);
             }
 
             if let Err(e) = tokio::fs::remove_dir(&path)
