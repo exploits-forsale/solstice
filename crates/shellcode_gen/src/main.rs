@@ -11,6 +11,7 @@ use std::io::prelude::*;
 use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -34,7 +35,7 @@ fn main() -> Result<()> {
     let gamescript_exploit = generate_gamescript_exploit(&stage1_output)?;
 
     // generate the exploit code to load the stage1 network code
-    let gamescript_network_exploit = generate_gamescript_exploit(&stage1_network_output)?;
+    let gamescript_network_exploit = generate_network_gamescript_exploit(&stage1_network_output)?;
 
     if !output_path.exists() {
         std::fs::create_dir(output_path)?;
@@ -170,4 +171,46 @@ fn generate_gamescript_exploit(shellcode_path: &Path) -> anyhow::Result<String> 
     let exploit_data = include_str!("../gs_exploit_template.txt");
 
     Ok(exploit_data.replace("<SHELLCODE_GEN_PLZ_REPLACE_ME>", &shellcode_data))
+}
+
+fn generate_network_gamescript_exploit(shellcode_path: &Path) -> anyhow::Result<String> {
+    // Use decimal encoding to produce a smaller script. Decimal is at most 3
+    // chars while hex is at min 3, at most 5.
+    let shellcode_data: String = std::fs::read(shellcode_path)?
+        .iter()
+        .map(|b| format!("{}", *b))
+        .intersperse(",".to_string())
+        .collect();
+
+    let exploit_data = include_str!("../gs_exploit_template_network.txt");
+    let commit: String = String::from_utf8(
+        Command::new("git")
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()
+            .expect("failed to get `git rev-parse` output")
+            .stdout,
+    )
+    .expect("failed to parse `git rev-parse` output");
+
+    let commit_date: String = String::from_utf8(
+        Command::new("git")
+            .arg("show")
+            .arg("--no-patch")
+            .arg("--format=%ci")
+            .arg(&commit)
+            .output()
+            .expect("failed to get `git show` output")
+            .stdout,
+    )
+    .expect("failed to parse `git show` output");
+
+    Ok(exploit_data
+        .replace("<SHELLCODE_GEN_PLZ_REPLACE_ME>", &shellcode_data)
+        .replace(
+            "<HOST_IP>",
+            &include_str!("../../../host_ip.txt")
+                .replace("<GIT_VERSION>", &commit)
+                .replace("<GIT_DATE>", &commit_date),
+        ))
 }
