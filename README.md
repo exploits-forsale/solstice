@@ -137,13 +137,13 @@ stage2 is executed directly in-memory, but the `run.exe` (stage3) _is_ written t
 
 ### `shellcode_stage2`
 
-`shellcode_stage2/` is read by stage1 from disk, made executable, and executed. stage2 then reads a PE file from disk, specified at `AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState\run.exe`, and manually loads the PE using our `loader`. This shellcode can be arbitrarily large since it's not limited by typing or GameScript sizes.
+`shellcode_stage2/` is read by stage1 from disk, made executable, and executed. stage2 then reads a PE file from disk, specified at `AppData\Local\Packages\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\LocalState\run.exe`, and manually loads the PE using our `solstice_loader`. This shellcode can be arbitrarily large since it's not limited by typing or GameScript sizes.
 
-### `loader`
+### `solstice_loader`
 
 The main reflective PE loader. This is a fork of [`Thoxy67/rspe`](https://github.com/Thoxy67/rspe) that's been heavily modified.
 
-### `server`
+### `payload_server`
 
 The server that communicates with `shellcode_stage1_network` over port 8080. Its purpose is to send 4 main TCP packets:
 
@@ -161,6 +161,10 @@ On port `8081` it can listen for text-based content and print out to the termina
 ### `shellcode_gen`
 
 Reads the resulting exe files from `shellcode_stage*/`, applies some patches to make the first few bytes jump to the entrypoint, and generates a flattened .bin file containing only the `.text` section.
+
+### `solstice_daemon`
+
+Changes firewall settings on the Xbox to allow traffic on port 22 and runs an SSH/SFTP server.
 
 ### General
 
