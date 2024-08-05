@@ -120,7 +120,7 @@ fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
             translated_path.push(component);
         }
 
-        translated_path = translated_path.canonicalize().unwrap_or(translated_path);
+        translated_path = std::path::absolute(&translated_path).unwrap_or(translated_path);
         debug!("returning translated path: {:?}", translated_path);
 
         Some(translated_path)
@@ -747,5 +747,29 @@ mod tests {
             assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/../.")), PathBuf::from("/C"));
             assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/../C/users/.././.")), PathBuf::from("/C"));
         }
+    }
+
+    #[test]
+    fn test_unix_style_to_windows_path() {
+        assert_eq!(unix_like_path_to_windows_path(""), None);
+        assert_eq!(unix_like_path_to_windows_path("C/"), None);
+        assert_eq!(unix_like_path_to_windows_path("C/Windows"), None);
+        assert_eq!(unix_like_path_to_windows_path("/").unwrap(), PathBuf::from("/"));
+        assert_eq!(unix_like_path_to_windows_path("/C").unwrap(), PathBuf::from("C:\\"));
+        assert_eq!(unix_like_path_to_windows_path("/C/").unwrap(), PathBuf::from("C:\\"));
+        assert_eq!(unix_like_path_to_windows_path("/C/./.").unwrap(), PathBuf::from("C:\\"));
+        assert_eq!(unix_like_path_to_windows_path("/C/././").unwrap(), PathBuf::from("C:\\"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows").unwrap(), PathBuf::from("C:\\Windows"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/").unwrap(), PathBuf::from("C:\\Windows"));
+        assert_eq!(unix_like_path_to_windows_path("/C/./././Windows/").unwrap(), PathBuf::from("C:\\Windows"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32").unwrap(), PathBuf::from("C:\\Windows\\System32"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/").unwrap(), PathBuf::from("C:\\Windows\\System32"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/././System32/").unwrap(), PathBuf::from("C:\\Windows\\System32"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/..").unwrap(), PathBuf::from("C:\\Windows"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/../").unwrap(), PathBuf::from("C:\\Windows"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/././System32/../").unwrap(), PathBuf::from("C:\\Windows"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/../..").unwrap(), PathBuf::from("C:\\"));
+        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/../../").unwrap(), PathBuf::from("C:\\"));
+        assert_eq!(unix_like_path_to_windows_path("/C/./././Windows/System32/../../").unwrap(), PathBuf::from("C:\\"));
     }
 }
