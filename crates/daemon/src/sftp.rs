@@ -418,32 +418,29 @@ impl russh_sftp::server::Handler for SftpSession {
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
         debug!("lstat: {id} {path}");
 
-        let win_path = unix_like_path_to_windows_path(&path);
-        // Only accept full paths
-        if win_path.is_none() {
-            dbg!("lstat returning no such file");
-            return Err(StatusCode::NoSuchFile);
-        }
-
-        if path == "/" {
-            debug!("returning root");
-            // They're statting the virtual root dir
-            return Ok(Attrs {
-                id,
-                attrs: FileAttributes::default(),
-            });
-        }
-
-        let win_path = win_path.unwrap();
-        match win_path.metadata().context("lstat metadata") {
-            Ok(meta) => Ok(Attrs {
-                id,
-                attrs: (&meta).into(),
-            }),
-            Err(e) => {
-                error!("{:?}", e);
-                Err(StatusCode::NoSuchFile)
+        if let Some(win_path) = unix_like_path_to_windows_path(&path) {
+            if path == "/" {
+                debug!("returning root");
+                // They're statting the virtual root dir
+                return Ok(Attrs {
+                    id,
+                    attrs: FileAttributes::default(),
+                });
             }
+
+            match win_path.metadata().context("lstat metadata") {
+                Ok(meta) => Ok(Attrs {
+                    id,
+                    attrs: (&meta).into(),
+                }),
+                Err(e) => {
+                    error!("{:?}", e);
+                    Err(StatusCode::NoSuchFile)
+                }
+            }
+        } else {
+            // Only accept full paths
+            return Err(StatusCode::NoSuchFile);
         }
     }
 
@@ -578,27 +575,25 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
     ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
         debug!("stat: {id} {path}");
-        let win_path = unix_like_path_to_windows_path(&path);
-        // Only accept full paths
-        if win_path.is_none() {
+        if let Some(win_path) = unix_like_path_to_windows_path(&path) {
+            if path == "/" {
+                // They're statting the virtual root dir
+                return Ok(Attrs {
+                    id,
+                    attrs: FileAttributes::default(),
+                });
+            }
+
+            match win_path.metadata() {
+                Ok(meta) => Ok(Attrs {
+                    id,
+                    attrs: (&meta).into(),
+                }),
+                Err(_) => Err(StatusCode::NoSuchFile),
+            }
+        } else {
+            // Only accept full paths
             return Err(StatusCode::NoSuchFile);
-        }
-
-        if path == "/" {
-            // They're statting the virtual root dir
-            return Ok(Attrs {
-                id,
-                attrs: FileAttributes::default(),
-            });
-        }
-
-        let win_path = win_path.unwrap();
-        match win_path.metadata() {
-            Ok(meta) => Ok(Attrs {
-                id,
-                attrs: (&meta).into(),
-            }),
-            Err(_) => Err(StatusCode::NoSuchFile),
         }
     }
 
@@ -656,13 +651,22 @@ impl russh_sftp::server::Handler for SftpSession {
                 .context("reading link")
             {
                 Ok(file) => {
-                    let metadata = &file.metadata().unwrap();
-                    let filename = file.file_name().unwrap_or(std::ffi::OsStr::new("/")).to_string_lossy().to_owned();
+                    let mut attrs = FileAttributes::default();
+                    if let Ok(metadata) = &file.metadata() {
+                        attrs = (metadata).into();
+                    } else {
+                        warn!("failed to fetch attributes for {file:?}");
+                    }
+                    let filename = file.file_name()
+                        .unwrap_or(std::ffi::OsStr::new("/"))
+                        .to_string_lossy()
+                        .to_owned();
+
                     Ok(Name {
                         id,
                         files: vec![FileEx {
                             filename: filename.to_string(),
-                            attrs: metadata.into()
+                            attrs: attrs
                         }.into()]
                     })
                 },
@@ -697,7 +701,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 {
                     Ok(_) => return Ok(self.success(id)),
                     Err(e) => {
-                        error!("reading link: {e:?}");
+                        warn!("symlink failed: {e:?}");
                         return Err(StatusCode::Failure);
                     }
                 }
