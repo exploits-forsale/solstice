@@ -539,15 +539,6 @@ impl russh_sftp::server::Handler for SftpSession {
         debug!("mkdir: {id} {path}");
         if let Some(path) = unix_like_path_to_windows_path(&path) {
             match path.parent() {
-                Some(parent)
-                    if parent
-                        .file_name()
-                        .expect("path has no filename?")
-                        .to_string_lossy()
-                        == "/" =>
-                {
-                    Err(StatusCode::PermissionDenied)
-                }
                 Some(parent) if parent.is_dir() => {
                     if let Err(e) = tokio::fs::create_dir(path)
                         .await
