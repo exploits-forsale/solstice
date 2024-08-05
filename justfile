@@ -4,7 +4,7 @@ default-features := ""
 default-run := "outputs/test_program_rust.exe"
 
 run-server-internal pwd="" run=default-run features=default-features:
-    cd ./crates/server && cargo run --release --features={{features}} -- --stage2 ../../outputs/stage2.bin --run {{pwd}}/{{run}}
+    cd ./crates/payload_server && cargo run --release --features={{features}} -- --stage2 ../../outputs/stage2.bin --run {{pwd}}/{{run}}
 
 run-server run=default-run features=default-features:
     just --justfile {{justfile()}} run-server-internal %PWD% {{run}} {{features}}

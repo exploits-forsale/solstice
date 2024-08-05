@@ -1,13 +1,13 @@
 {
     "rust-analyzer.linkedProjects": [
-        "${workspaceFolder}/crates/loader/Cargo.toml",
+        "${workspaceFolder}/crates/solstice_loader/Cargo.toml",
         "${workspaceFolder}/crates/shellcode_stage1/Cargo.toml",
         "${workspaceFolder}/crates/shellcode_stage1_network/Cargo.toml",
         "${workspaceFolder}/crates/shellcode_stage2/Cargo.toml",
         "${workspaceFolder}/crates/shellcode_utils/Cargo.toml",
         "${workspaceFolder}/crates/shellcode_gen/Cargo.toml",
         "${workspaceFolder}/crates/test_program_rust/Cargo.toml",
-        "${workspaceFolder}/crates/server/Cargo.toml",
-        "${workspaceFolder}/crates/daemon/Cargo.toml",
+        "${workspaceFolder}/crates/payload_server/Cargo.toml",
+        "${workspaceFolder}/crates/solstice_daemon/Cargo.toml",
     ]
 }

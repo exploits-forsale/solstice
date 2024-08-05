@@ -1,8 +1,8 @@
 [package]
 name = "shellcode_stage2"
 version = "0.1.0"
-authors = ["b1tg <b1tg@users.noreply.github.com>"]
-edition = "2018"
+authors = ["exploits.forsale"]
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -25,7 +25,7 @@ path = "../shellcode_utils"
 git = "https://github.com/rust-lang/compiler-builtins"
 
 [dependencies.solstice_loader]
-path = "../loader"
+path = "../solstice_loader"
 features = ["shellcode_compat"]
 
 [features]
