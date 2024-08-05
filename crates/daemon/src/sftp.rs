@@ -293,7 +293,7 @@ impl russh_sftp::server::Handler for SftpSession {
     ) -> Result<Handle, Self::Error> {
         debug!("open: {id} {filename} {pflags:?} {attrs:?}");
         if let Some(path) = unix_like_path_to_windows_path(&filename) {
-            if !path.exists() {
+            if !path.exists() && !pflags.contains(OpenFlags::CREATE) {
                 return Err(StatusCode::NoSuchFile);
             }
 
