@@ -13,7 +13,7 @@ jobs:
       matrix:
         component: [shellcode_utils, solstice_loader, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, shellcode_gen, solstice_daemon, payload_server]
         include:
-          - component: daemon
+          - component: solstice_daemon
             features: firewall
             test: true
 
