@@ -199,6 +199,24 @@ impl russh::server::Handler for SshSession {
         Ok(true)
     }
 
+    async fn channel_close(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.close(channel);
+        Ok(())
+    }
+
+    async fn channel_eof(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.close(channel);
+        Ok(())
+    }
+
     async fn subsystem_request(
         &mut self,
         channel_id: ChannelId,
