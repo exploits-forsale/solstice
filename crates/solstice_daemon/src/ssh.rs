@@ -457,6 +457,65 @@ impl russh::server::Handler for SshSession {
         }
         Ok(())
     }
+
+    async fn exec_request(
+        &mut self,
+        channel_id: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        // TODO: Make this "a bit" nicer..
+        if data.starts_with(b"passwd") {
+            let expected_pw_hash = read_passwd(&self.config_dir)?;
+
+            if let Ok(passwd_line) = String::from_utf8(data.to_vec()) {
+                let mut parts = passwd_line.split(" ");
+                if parts.next() != Some("passwd") {
+                    session.data(channel_id, CryptoVec::from_slice(b"Invalid command\n"));
+                    session.channel_success(channel_id);
+                    session.close(channel_id);
+                    return Err(anyhow::anyhow!("Invalid command supplied"));
+                }
+                let old_pw = parts.next();
+                let new_pw = parts.next();
+
+                match (old_pw, new_pw) {
+                    (Some(old_pw), Some(new_pw)) => {
+                        if let Ok(_) = verify_password(old_pw, &expected_pw_hash) {
+                            // All checks passed, setting new password
+                            self.set_new_password(new_pw)?;
+                            session.data(
+                                channel_id,
+                                CryptoVec::from_slice(b"New password set successfully!\n"),
+                            );
+                        } else {
+                            session.data(channel_id, CryptoVec::from_slice(b"Invalid password\n"));
+                        }
+                    }
+                    (_, _) => {
+                        session.data(channel_id, CryptoVec::from_slice(b"Invalid argument count\n"));
+                    }
+                }
+            } else {
+                session.data(
+                    channel_id,
+                    CryptoVec::from_slice(b"Failed to handle passwd input\n"),
+                );
+            }
+        } else {
+            // TODO: Support spawning arbitrary / interactive commands
+            session.data(
+                channel_id,
+                CryptoVec::from_slice(
+                    b"Currently only the command 'passwd <old pw> <new pw>' is supported\n",
+                ),
+            );
+        }
+
+        session.channel_success(channel_id);
+        session.close(channel_id);
+        Ok(())
+    }
 }
 
 pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<KeyPair> {
