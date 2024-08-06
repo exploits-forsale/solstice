@@ -671,15 +671,10 @@ pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
     }
 }
 
-const LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES: [u8; 21] = [
-    0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xFA, 0x48, 0x8B, 0xD9,
-    0x48, 0x85, 0xD2, 0x75, 0x0C,
-];
+const LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES: [u8; 7] = [0x83, 0xE1, 0x07, 0x48, 0xC1, 0xEA, 0x03];
 
-const LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES: [u8; 24] = [
-    0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0x89, 0x7C, 0x24, 0x20, 0x41,
-    0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x81, 0xEC,
-];
+const LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES: [u8; 9] =
+    [0xBA, 0x23, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC9, 0xFF];
 
 type LdrpReleaseTlsEntryFn =
     unsafe extern "system" fn(entry: *mut LDR_DATA_TABLE_ENTRY, unk: *mut c_void) -> NTSTATUS;
@@ -722,7 +717,15 @@ pub unsafe fn patch_ldr_data(
                     // Get the TLS entry for the current module and remove it from the list
                     for window in ntdll_text.windows(LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES.len()) {
                         if window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES {
-                            let ptr = window.as_ptr();
+                            // Get this window's pointer. It will land us in the middle of this function though
+                            let mut ptr = window.as_ptr();
+                            // Walk backwards until we find the prologue. Pray this function retains padding
+                            loop {
+                                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
+                                    break;
+                                }
+                                ptr = ptr.offset(-1);
+                            }
 
                             // Get this window's pointer and move backwards to find the start of the fn
                             #[allow(non_snake_case)]
@@ -737,8 +740,16 @@ pub unsafe fn patch_ldr_data(
 
                     for window in ntdll_text.windows(LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES.len()) {
                         if window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES {
-                            // Get this window's pointer -- it should be to the start of the function
-                            let ptr = window.as_ptr();
+                            // Get this window's pointer. It will land us in the middle of this function though
+                            let mut ptr = window.as_ptr();
+                            // Walk backwards until we find the prologue. Pray this function retains padding
+                            loop {
+                                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
+                                    break;
+                                }
+                                ptr = ptr.offset(-1);
+                            }
+
                             #[allow(non_snake_case)]
                             let LdrpHandleTlsData: LdrpHandleTlsDataFn = core::mem::transmute(ptr);
 
