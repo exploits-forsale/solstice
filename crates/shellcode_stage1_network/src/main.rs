@@ -133,7 +133,7 @@ pub extern "C" fn main() -> u64 {
                     S_addr: (inet_addr)(collat_info_ref.ip_addr.as_ptr() as *const _),
                 },
             },
-            sin_zero: [0u8; 8],
+            sin_zero: [0i8; 8],
         };
 
         (wsa_connect)(

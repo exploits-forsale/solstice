@@ -33,7 +33,7 @@ features = [
     "Win32_Security",
     "Win32_System_LibraryLoader",
 ]
-version = "0.52.0"
+version = "0.59.0"
 default-features = false
 
 [dependencies.shellcode_utils]

@@ -398,24 +398,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "portable-pty",
- "russh",
- "russh-keys",
- "russh-sftp",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "windows",
- "winreg 0.52.0",
-]
-
-[[package]]
 name = "data-encoding"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1750,6 +1732,24 @@ checksum = "ce305eb0b4296696835b71df73eb912e0f1ffd2556a501fcede6e0c50349191c"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "solstice_daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "portable-pty",
+ "russh",
+ "russh-keys",
+ "russh-sftp",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "windows",
+ "winreg 0.52.0",
 ]
 
 [[package]]

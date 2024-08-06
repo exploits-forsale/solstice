@@ -2,6 +2,7 @@
 name = "shellcode_utils"
 version = "0.1.0"
 edition = "2021"
+authors = ["exploits.forsale"]
 
 [dependencies]
 paste = "1.0"
@@ -16,7 +17,7 @@ version = "0.2"
 default-features = false
 
 [dependencies.windows-sys]
-version = "0.52.0"
+version = "0.59.0"
 default-features = false
 features = [
     "Win32_System_Threading",

@@ -11,9 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [shellcode_utils, loader, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, shellcode_gen, daemon, server]
+        component: [shellcode_utils, solstice_loader, shellcode_stage1, shellcode_stage1_network, shellcode_stage2, shellcode_gen, solstice_daemon, payload_server]
         include:
-          - component: daemon
+          - component: solstice_daemon
             features: firewall
             test: true
 
@@ -64,8 +64,8 @@ jobs:
         run: |
           xcopy README.md output\
           xcopy LICENSE output\
-          xcopy crates\daemon\target\release\daemon.exe output\
-          xcopy crates\server\target\release\server.exe output\
+          xcopy crates\solstice_daemon\target\release\solstice_daemon.exe output\
+          xcopy crates\payload_server\target\release\payload_server.exe output\
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
