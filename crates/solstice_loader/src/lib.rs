@@ -19,7 +19,7 @@ use pelib::get_headers_size;
 use pelib::get_image_size;
 use pelib::get_nt_header;
 use pelib::patch_kernelbase;
-use pelib::patch_module_list;
+use pelib::patch_ldr_data;
 use pelib::patch_peb;
 use pelib::write_import_table;
 use pelib::write_sections;
@@ -208,58 +208,13 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
         baseptr.offset(tls_directory.VirtualAddress as isize) as *mut IMAGE_TLS_DIRECTORY64
     };
 
-    // TODO: Patch the module list
-    let tls_index = patch_module_list(
-        context.image_name,
+    patch_ldr_data(
         baseptr,
         imagesize,
         context.fns.get_module_handle_fn,
         tls_data_addr,
-        context.fns.virtual_protect,
         entrypoint,
     );
-
-    if tls_directory.Size > 0 {
-        // Grab the TLS data from the PE we're loading
-        let tls_data_addr =
-            baseptr.offset(tls_directory.VirtualAddress as isize) as *mut IMAGE_TLS_DIRECTORY64;
-
-        let tls_data: &mut IMAGE_TLS_DIRECTORY64 = unsafe { core::mem::transmute(tls_data_addr) };
-
-        // Grab the TLS start from the TEB
-        let tls_start: *mut *mut c_void;
-        unsafe { core::arch::asm!("mov {}, gs:[0x58]", out(reg) tls_start) }
-
-        let tls_slot = tls_start.offset(tls_index as isize);
-        let raw_data_size = tls_data.EndAddressOfRawData - tls_data.StartAddressOfRawData;
-        let tls_data_addr = (context.fns.virtual_alloc)(
-            ptr::null(),
-            raw_data_size as usize, // + tls_data.SizeOfZeroFill as usize,
-            MEM_COMMIT,
-            PAGE_READWRITE,
-        );
-
-        core::ptr::copy_nonoverlapping(
-            tls_data.StartAddressOfRawData as *const _,
-            tls_data_addr,
-            raw_data_size as usize,
-        );
-
-        // Update the TLS index
-        core::ptr::write(tls_data.AddressOfIndex as *mut u32, tls_index);
-        *tls_slot = tls_data_addr;
-
-        let mut callbacks_addr = tls_data.AddressOfCallBacks as *const *const c_void;
-        if !callbacks_addr.is_null() {
-            let mut callback = unsafe { *callbacks_addr };
-
-            while !callback.is_null() {
-                execute_tls_callback(baseptr, callback);
-                callbacks_addr = callbacks_addr.add(1);
-                callback = unsafe { *callbacks_addr };
-            }
-        }
-    }
 
     // Set exception handler
     #[cfg(target_arch = "x86_64")]
@@ -345,6 +300,11 @@ pub unsafe fn reflective_loader(context: LoaderContext) {
     reflective_loader_impl(context);
 }
 
+struct EntrypointData {
+    dll_base: *const c_void,
+    entrypoint: *const c_void,
+}
+
 /// Executes the image by calling its entry point and waiting for the thread to finish executing.
 ///
 /// # Arguments
@@ -360,26 +320,30 @@ unsafe fn execute_image(
     entrypoint: *const c_void,
     create_thread_fn: CreateThreadFn,
 ) {
-    // if let Some(create_thread_fn) = create_thread_fn {
-    //     unsafe {
-    //         let handle = (create_thread_fn)(
-    //             ptr::null(),     // default security attributes
-    //             0,               // default stack size
-    //             entrypoint,      // thread start fn
-    //             ptr::null(),     // args
-    //             0,               // default creation flags
-    //             ptr::null_mut(), // thread id
-    //         );
+    let args = EntrypointData {
+        dll_base,
+        entrypoint,
+    };
 
-    //         core::arch::asm!("int 3");
-    //     }
-    // } else {
-    // Call the entry point of the image
-    // Load the DLL
+    unsafe {
+        let _handle = (create_thread_fn)(
+            ptr::null(), // default security attributes
+            0,           // default stack size
+            core::mem::transmute(execute_image_entrypoint as unsafe extern "system" fn(_)), // thread start fn
+            core::mem::transmute(&args),                                                    // args
+            0,               // default creation flags
+            ptr::null_mut(), // thread id
+        );
+    }
+
+    // Hang this thread forever
+    loop {}
+}
+
+unsafe extern "system" fn execute_image_entrypoint(args: *const EntrypointData) {
     let func: extern "system" fn(*const c_void, u32, *const c_void) -> u32 =
-        core::mem::transmute(entrypoint);
-    func(dll_base, DLL_PROCESS_ATTACH, ptr::null());
-    //}
+        core::mem::transmute((*args).entrypoint);
+    func((*args).dll_base, DLL_PROCESS_ATTACH, ptr::null());
 }
 
 /// Executes the image by calling its entry point and waiting for the thread to finish executing.

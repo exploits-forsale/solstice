@@ -4,6 +4,7 @@ use shellcode_utils::prelude::GetModuleHandleAFn;
 use shellcode_utils::prelude::GetProcAddressFn;
 use shellcode_utils::prelude::LoadLibraryAFn;
 use shellcode_utils::prelude::VirtualProtectFn;
+use windows_sys::Win32::Foundation::NTSTATUS;
 use windows_sys::Win32::Foundation::UNICODE_STRING;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DATA_DIRECTORY;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_BASERELOC;
@@ -670,30 +671,32 @@ pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
     }
 }
 
-struct LDRP_TLS_DATA {
-    TlsLinks: LIST_ENTRY,
-    TlsDirectory: IMAGE_TLS_DIRECTORY64,
-}
+const LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES: [u8; 21] = [
+    0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xFA, 0x48, 0x8B, 0xD9,
+    0x48, 0x85, 0xD2, 0x75, 0x0C,
+];
 
-const LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES: [u8; 8] =
-    [0x48, 0x3B, 0xC2, 0x75, 0xF2, 0x33, 0xC0, 0xC3];
+const LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES: [u8; 24] = [
+    0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0x89, 0x7C, 0x24, 0x20, 0x41,
+    0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x81, 0xEC,
+];
 
-type LdrpFindTlSEntryFn =
-    unsafe extern "system" fn(entry: *const LDR_DATA_TABLE_ENTRY) -> *mut LDRP_TLS_DATA;
+type LdrpReleaseTlsEntryFn =
+    unsafe extern "system" fn(entry: *mut LDR_DATA_TABLE_ENTRY, unk: *mut c_void) -> NTSTATUS;
+
+type LdrpHandleTlsDataFn = unsafe extern "system" fn(entry: *mut LDR_DATA_TABLE_ENTRY);
 
 /// Patches the module list to change the old image name to the new image name.
 ///
 /// This is useful to ensure that a program that depends on `GetModuleHandle*`
 /// doesn't fail simply because its module is not found
-pub unsafe fn patch_module_list(
-    image_name: Option<&[u16]>,
+pub unsafe fn patch_ldr_data(
     new_base_address: *mut c_void,
     module_size: usize,
     get_module_handle_fn: GetModuleHandleAFn,
     this_tls_data: *const IMAGE_TLS_DIRECTORY64,
-    virtual_protect: VirtualProtectFn,
     entrypoint: *const c_void,
-) -> u32 {
+) {
     let current_module = get_module_handle_fn(core::ptr::null());
 
     let teb = teb();
@@ -701,6 +704,7 @@ pub unsafe fn patch_module_list(
     let ldr_data = (*peb).Ldr;
     let module_list_head = &mut (*ldr_data).InMemoryOrderModuleList as *mut LIST_ENTRY;
     let mut next = (*module_list_head).Flink;
+
     while next != module_list_head {
         // -1 because this is the second field in the LDR_DATA_TABLE_ENTRY struct.
         // the first one is also a LIST_ENTRY
@@ -715,23 +719,32 @@ pub unsafe fn patch_module_list(
             if !this_tls_data.is_null() {
                 let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
                 if let Some(ntdll_text) = get_module_section(ntdll_addr as *mut _, b".text") {
-                    for window in ntdll_text.windows(LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES.len()) {
-                        if window == LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES {
+                    // Get the TLS entry for the current module and remove it from the list
+                    for window in ntdll_text.windows(LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES.len()) {
+                        if window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES {
+                            let ptr = window.as_ptr();
+
                             // Get this window's pointer and move backwards to find the start of the fn
-                            let mut ptr = window.as_ptr();
-                            loop {
-                                let behind = ptr.offset(-1);
-                                if *behind == 0xcc {
-                                    break;
-                                }
-                                ptr = ptr.offset(-1);
-                            }
+                            #[allow(non_snake_case)]
+                            let LdrpReleaseTlsEntry: LdrpReleaseTlsEntryFn =
+                                core::mem::transmute(ptr);
 
-                            let LdrpFindTlsEntry: LdrpFindTlSEntryFn = core::mem::transmute(ptr);
+                            LdrpReleaseTlsEntry(module_info, core::ptr::null_mut());
 
-                            let list_entry = LdrpFindTlsEntry(module_info);
+                            break;
+                        }
+                    }
 
-                            (*list_entry).TlsDirectory = *this_tls_data;
+                    for window in ntdll_text.windows(LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES.len()) {
+                        if window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES {
+                            // Get this window's pointer -- it should be to the start of the function
+                            let ptr = window.as_ptr();
+                            #[allow(non_snake_case)]
+                            let LdrpHandleTlsData: LdrpHandleTlsDataFn = core::mem::transmute(ptr);
+
+                            LdrpHandleTlsData(module_info);
+
+                            break;
                         }
                     }
                 }
@@ -739,38 +752,6 @@ pub unsafe fn patch_module_list(
             break;
         }
         next = (*next).Flink;
-    }
-
-    if !this_tls_data.is_null() {
-        let dosheader = get_dos_header(current_module);
-        let ntheader = get_nt_header(current_module, dosheader);
-
-        #[cfg(target_arch = "x86_64")]
-        let ntheader_ref: &mut IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
-        #[cfg(target_arch = "x86")]
-        let ntheader_ref: &mut IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
-
-        let real_module_tls_entry =
-            &mut ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
-
-        let real_module_tls_dir = current_module
-            .offset(real_module_tls_entry.VirtualAddress as isize)
-            as *mut IMAGE_TLS_DIRECTORY64;
-
-        let mut old_perms = 0;
-        virtual_protect(
-            real_module_tls_dir as *mut _ as *const _,
-            core::mem::size_of::<IMAGE_TLS_DIRECTORY64>(),
-            PAGE_READWRITE,
-            &mut old_perms,
-        );
-
-        let idx = *((*real_module_tls_dir).AddressOfIndex as *const u32);
-        *real_module_tls_dir = *this_tls_data;
-
-        idx
-    } else {
-        0
     }
 }
 
