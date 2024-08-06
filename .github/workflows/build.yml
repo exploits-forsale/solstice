@@ -64,8 +64,8 @@ jobs:
         run: |
           xcopy README.md output\
           xcopy LICENSE output\
-          xcopy crates\daemon\target\release\daemon.exe output\
-          xcopy crates\server\target\release\server.exe output\
+          xcopy crates\daemon\target\release\solstice_daemon.exe output\
+          xcopy crates\server\target\release\payload_server.exe output\
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
