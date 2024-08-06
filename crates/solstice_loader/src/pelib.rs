@@ -4,6 +4,7 @@ use shellcode_utils::prelude::GetModuleHandleAFn;
 use shellcode_utils::prelude::GetProcAddressFn;
 use shellcode_utils::prelude::LoadLibraryAFn;
 use shellcode_utils::prelude::VirtualProtectFn;
+use windows_sys::Win32::Foundation::NTSTATUS;
 use windows_sys::Win32::Foundation::UNICODE_STRING;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DATA_DIRECTORY;
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_DIRECTORY_ENTRY_BASERELOC;
@@ -678,8 +679,22 @@ struct LDRP_TLS_DATA {
 const LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES: [u8; 8] =
     [0x48, 0x3B, 0xC2, 0x75, 0xF2, 0x33, 0xC0, 0xC3];
 
+const LDRP_ALLOCATE_TLS_ENTRY_SIGNATURE_BYTES: [u8; 8] = [
+    0x4C, 0x89, 0x4C, 0x24, 0x20, 0x4C, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x54, 0x24, 0x10, 0x53,
+    0x56, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x30, 0x49, 0x8B,
+];
+
 type LdrpFindTlSEntryFn =
     unsafe extern "system" fn(entry: *const LDR_DATA_TABLE_ENTRY) -> *mut LDRP_TLS_DATA;
+
+// Signature taken from http://www.nynaeve.net/Code/VistaImplicitTls.cpp
+type LdrpAllocateTlsEntryFn = unsafe extern "system" fn(
+    image_tls_dir: *const IMAGE_TLS_DIRECTORY64,
+    entry: *mut LDR_DATA_TABLE_ENTRY,
+    tls_index: &mut u32,
+    allocated_bitmap: *mut c_void,
+    tls_entry: *mut *const c_void,
+) -> NTSTATUS;
 
 /// Patches the module list to change the old image name to the new image name.
 ///
@@ -701,6 +716,7 @@ pub unsafe fn patch_module_list(
     let ldr_data = (*peb).Ldr;
     let module_list_head = &mut (*ldr_data).InMemoryOrderModuleList as *mut LIST_ENTRY;
     let mut next = (*module_list_head).Flink;
+    let mut tls_index = 0;
     while next != module_list_head {
         // -1 because this is the second field in the LDR_DATA_TABLE_ENTRY struct.
         // the first one is also a LIST_ENTRY
@@ -715,23 +731,22 @@ pub unsafe fn patch_module_list(
             if !this_tls_data.is_null() {
                 let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
                 if let Some(ntdll_text) = get_module_section(ntdll_addr as *mut _, b".text") {
-                    for window in ntdll_text.windows(LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES.len()) {
-                        if window == LDRP_FIND_TLS_ENTRY_SIGNATURE_BYTES {
-                            // Get this window's pointer and move backwards to find the start of the fn
+                    for window in ntdll_text.windows(LDRP_ALLOCATE_TLS_ENTRY_SIGNATURE_BYTES.len())
+                    {
+                        if window == LDRP_ALLOCATE_TLS_ENTRY_SIGNATURE_BYTES {
+                            // Get this window's pointer -- it should be to the start of the function
                             let mut ptr = window.as_ptr();
-                            loop {
-                                let behind = ptr.offset(-1);
-                                if *behind == 0xcc {
-                                    break;
-                                }
-                                ptr = ptr.offset(-1);
-                            }
+                            let LdrpAllocateTlsEntry: LdrpAllocateTlsEntryFn =
+                                core::mem::transmute(ptr);
 
-                            let LdrpFindTlsEntry: LdrpFindTlSEntryFn = core::mem::transmute(ptr);
-
-                            let list_entry = LdrpFindTlsEntry(module_info);
-
-                            (*list_entry).TlsDirectory = *this_tls_data;
+                            let mut tls_entry: *const c_void = core::ptr::null();
+                            LdrpAllocateTlsEntry(
+                                this_tls_data,                   // ImageName
+                                module_info,                     // Entry
+                                &mut tls_index,                  // TlsIndex
+                                core::ptr::null_mut(),           // AllocatedBitmap
+                                &mut tls_entry as *mut *const _, // TlsEntry
+                            );
                         }
                     }
                 }
@@ -741,37 +756,7 @@ pub unsafe fn patch_module_list(
         next = (*next).Flink;
     }
 
-    if !this_tls_data.is_null() {
-        let dosheader = get_dos_header(current_module);
-        let ntheader = get_nt_header(current_module, dosheader);
-
-        #[cfg(target_arch = "x86_64")]
-        let ntheader_ref: &mut IMAGE_NT_HEADERS64 = unsafe { core::mem::transmute(ntheader) };
-        #[cfg(target_arch = "x86")]
-        let ntheader_ref: &mut IMAGE_NT_HEADERS32 = unsafe { core::mem::transmute(ntheader) };
-
-        let real_module_tls_entry =
-            &mut ntheader_ref.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS as usize];
-
-        let real_module_tls_dir = current_module
-            .offset(real_module_tls_entry.VirtualAddress as isize)
-            as *mut IMAGE_TLS_DIRECTORY64;
-
-        let mut old_perms = 0;
-        virtual_protect(
-            real_module_tls_dir as *mut _ as *const _,
-            core::mem::size_of::<IMAGE_TLS_DIRECTORY64>(),
-            PAGE_READWRITE,
-            &mut old_perms,
-        );
-
-        let idx = *((*real_module_tls_dir).AddressOfIndex as *const u32);
-        *real_module_tls_dir = *this_tls_data;
-
-        idx
-    } else {
-        0
-    }
+    tls_index
 }
 
 /// Returns the Thread Environment Block (TEB)
