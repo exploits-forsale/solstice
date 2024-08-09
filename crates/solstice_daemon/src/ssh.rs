@@ -416,7 +416,7 @@ pub async fn start_ssh_server(port: u16, config_dir: &PathBuf) -> std::io::Resul
     let ed25519_host_key = load_host_key(config_dir)?;
 
     let config = russh::server::Config {
-        auth_rejection_time: Duration::from_secs(3),
+        auth_rejection_time: Duration::from_secs(0),
         auth_rejection_time_initial: Some(Duration::from_secs(0)),
         keys: vec![ed25519_host_key],
         ..Default::default()
