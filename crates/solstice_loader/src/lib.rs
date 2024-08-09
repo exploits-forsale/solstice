@@ -18,7 +18,7 @@ use pelib::get_dos_header;
 use pelib::get_headers_size;
 use pelib::get_image_size;
 use pelib::get_nt_header;
-use pelib::patch_kernelbase;
+use pelib::patch_cli_args;
 use pelib::patch_ldr_data;
 use pelib::patch_peb;
 use pelib::write_import_table;
@@ -178,7 +178,7 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
     fix_section_permissions(baseptr, ntheader, dosheader, context.fns.virtual_protect);
 
     // Patch data in kernelbase
-    patch_kernelbase(context.args.clone(), context.modules.kernelbase);
+    patch_cli_args(context.args.clone(), context.modules.kernelbase);
 
     // Patch the PEB
     patch_peb(

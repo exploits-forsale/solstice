@@ -633,10 +633,8 @@ pub fn get_module_section(module: *mut u8, name: &[u8]) -> Option<&'static mut [
     None
 }
 
-/// Patches kernelbase to reflect some of the new image's data, including:
-///
-/// - The command line arguments
-pub unsafe fn patch_kernelbase(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
+/// Patches data in kernelbase to reflect new command line args
+pub unsafe fn patch_cli_args(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
     if let Some(args) = args {
         let peb = (*teb()).ProcessEnvironmentBlock;
         // This buffer pointer should match the cached UNICODE_STRING in kernelbase
