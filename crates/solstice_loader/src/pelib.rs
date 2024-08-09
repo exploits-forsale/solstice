@@ -680,7 +680,9 @@ type LdrpReleaseTlsEntryFn =
 
 type LdrpHandleTlsDataFn = unsafe extern "system" fn(entry: *mut LDR_DATA_TABLE_ENTRY);
 
-/// Patches the module list to change the old image name to the new image name.
+/// Patches the module list to change the hijacked module's DLL base and entrypoint.
+///
+/// TODO: Patch image name.
 ///
 /// This is useful to ensure that a program that depends on `GetModuleHandle*`
 /// doesn't fail simply because its module is not found
@@ -703,64 +705,69 @@ pub unsafe fn patch_ldr_data(
         // -1 because this is the second field in the LDR_DATA_TABLE_ENTRY struct.
         // the first one is also a LIST_ENTRY
         let module_info = (next.offset(-1)) as *mut LDR_DATA_TABLE_ENTRY;
-        if (*module_info).DllBase == current_module {
-            (*module_info).DllBase = new_base_address;
-            // EntryPoint
-            (*module_info).Reserved3[0] = entrypoint as *mut c_void;
-            // SizeOfImage
-            (*module_info).Reserved3[1] = module_size as *mut c_void;
+        if (*module_info).DllBase != current_module {
+            next = (*next).Flink;
+            continue;
+        }
 
-            if !this_tls_data.is_null() {
-                let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
-                if let Some(ntdll_text) = get_module_section(ntdll_addr as *mut _, b".text") {
-                    // Get the TLS entry for the current module and remove it from the list
-                    for window in ntdll_text.windows(LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES.len()) {
-                        if window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES {
-                            // Get this window's pointer. It will land us in the middle of this function though
-                            let mut ptr = window.as_ptr();
-                            // Walk backwards until we find the prologue. Pray this function retains padding
-                            loop {
-                                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
-                                    break;
-                                }
-                                ptr = ptr.offset(-1);
-                            }
+        (*module_info).DllBase = new_base_address;
+        // EntryPoint
+        (*module_info).Reserved3[0] = entrypoint as *mut c_void;
+        // SizeOfImage
+        (*module_info).Reserved3[1] = module_size as *mut c_void;
 
-                            #[allow(non_snake_case)]
-                            let LdrpReleaseTlsEntry: LdrpReleaseTlsEntryFn =
-                                core::mem::transmute(ptr);
-
-                            LdrpReleaseTlsEntry(module_info, core::ptr::null_mut());
-
-                            break;
-                        }
-                    }
-
-                    for window in ntdll_text.windows(LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES.len()) {
-                        if window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES {
-                            // Get this window's pointer. It will land us in the middle of this function though
-                            let mut ptr = window.as_ptr();
-                            // Walk backwards until we find the prologue. Pray this function retains padding
-                            loop {
-                                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
-                                    break;
-                                }
-                                ptr = ptr.offset(-1);
-                            }
-
-                            #[allow(non_snake_case)]
-                            let LdrpHandleTlsData: LdrpHandleTlsDataFn = core::mem::transmute(ptr);
-
-                            LdrpHandleTlsData(module_info);
-
-                            break;
-                        }
-                    }
-                }
-            }
+        if this_tls_data.is_null() {
             break;
         }
-        next = (*next).Flink;
+
+        let ntdll_addr = get_module_handle_fn("ntdll.dll\0".as_ptr() as *const _);
+        let ntdll_text = get_module_section(ntdll_addr as *mut _, b".text");
+        if ntdll_text.is_none() {
+            break;
+        }
+
+        let ntdll_text = ntdll_text.unwrap();
+        // Get the TLS entry for the current module and remove it from the list
+        if let Some(window) = ntdll_text
+            .windows(LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES.len())
+            .find(|window| window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES)
+        {
+            // Get this window's pointer. It will land us in the middle of this function though
+            let mut ptr = window.as_ptr();
+            // Walk backwards until we find the prologue. Pray this function retains padding
+            loop {
+                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
+                    break;
+                }
+                ptr = ptr.offset(-1);
+            }
+
+            #[allow(non_snake_case)]
+            let LdrpReleaseTlsEntry: LdrpReleaseTlsEntryFn = core::mem::transmute(ptr);
+
+            LdrpReleaseTlsEntry(module_info, core::ptr::null_mut());
+        }
+
+        if let Some(window) = ntdll_text
+            .windows(LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES.len())
+            .find(|window| window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES)
+        {
+            // Get this window's pointer. It will land us in the middle of this function though
+            let mut ptr = window.as_ptr();
+            // Walk backwards until we find the prologue. Pray this function retains padding
+            loop {
+                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
+                    break;
+                }
+                ptr = ptr.offset(-1);
+            }
+
+            #[allow(non_snake_case)]
+            let LdrpHandleTlsData: LdrpHandleTlsDataFn = core::mem::transmute(ptr);
+
+            LdrpHandleTlsData(module_info);
+        }
+        break;
     }
 }
 
