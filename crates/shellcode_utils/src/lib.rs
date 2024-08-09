@@ -89,10 +89,8 @@ pub fn get_module_by_name(module_name: *const u16) -> Option<PVOID> {
 
         loop {
             let cur_name = (*cur_module).BaseDllName.Buffer;
-            if !cur_name.is_null() {
-                if icmp_raw_str_u16(module_name, cur_name) {
-                    return Some((*cur_module).BaseAddress);
-                }
+            if !cur_name.is_null() && icmp_raw_str_u16(module_name, cur_name) {
+                return Some((*cur_module).BaseAddress);
             }
 
             let flink = (*cur_module).InLoadOrderModuleList.Flink;
@@ -302,14 +300,11 @@ pub unsafe fn suspend_threads(kernel32_ptr: PVOID, kernelbase_ptr: PVOID) {
             if te.dwSize as usize
                 >= offset_of!(THREADENTRY32, th32OwnerProcessID)
                     + core::mem::size_of_val(&te.th32OwnerProcessID)
+                && te.th32OwnerProcessID == pid
+                && current_thread != te.th32ThreadID
             {
-                if te.th32OwnerProcessID == pid {
-                    if current_thread != te.th32ThreadID {
-                        let thread_handle =
-                            OpenThread(THREAD_SUSPEND_RESUME, false, te.th32ThreadID);
-                        SuspendThread(thread_handle);
-                    }
-                }
+                let thread_handle = OpenThread(THREAD_SUSPEND_RESUME, false, te.th32ThreadID);
+                SuspendThread(thread_handle);
             }
             if Thread32Next(h, &mut te as *mut _) == 0 {
                 break;

@@ -28,6 +28,7 @@ use windows_sys::Win32::System::SystemServices::IMAGE_DOS_HEADER;
 use windows_sys::Win32::System::SystemServices::IMAGE_IMPORT_DESCRIPTOR;
 use windows_sys::Win32::System::SystemServices::IMAGE_TLS_DIRECTORY64;
 use windows_sys::Win32::System::Threading::PEB;
+use windows_sys::Win32::System::Threading::TEB;
 use windows_sys::Win32::System::WindowsProgramming::LDR_DATA_TABLE_ENTRY;
 use windows_sys::Win32::{self};
 
@@ -767,8 +768,8 @@ pub unsafe fn patch_ldr_data(
 }
 
 /// Returns the Thread Environment Block (TEB)
-pub fn teb() -> *mut Win32::System::Threading::TEB {
-    let mut teb: *mut Win32::System::Threading::TEB;
+pub fn teb() -> *mut TEB {
+    let mut teb: *mut TEB;
     unsafe { core::arch::asm!("mov {}, gs:[0x30]", out(reg) teb) }
 
     teb
