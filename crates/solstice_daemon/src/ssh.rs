@@ -10,12 +10,19 @@ use std::time::Duration;
 
 use anyhow::Context;
 use async_trait::async_trait;
+
+use pbkdf2::password_hash::PasswordHash;
+use pbkdf2::password_hash::PasswordHasher;
+use pbkdf2::password_hash::PasswordVerifier;
+use pbkdf2::password_hash::SaltString;
+use pbkdf2::Pbkdf2;
 use portable_pty::native_pty_system;
 use portable_pty::CommandBuilder;
 use portable_pty::MasterPty;
 use portable_pty::PtySize;
 use portable_pty::PtySystem;
 use portable_pty::SlavePty;
+use rand_core::OsRng;
 use russh::server::Auth;
 use russh::server::Msg;
 use russh::server::Server as _;
@@ -32,6 +39,8 @@ use tracing::error;
 use tracing::info;
 
 use crate::sftp::SftpSession;
+
+const DEFAULT_PASSWORD: &str = "xbox";
 
 struct PtyStream {
     reader: Mutex<Box<dyn Read + Send>>,
@@ -57,6 +66,10 @@ impl russh::server::Server for Server {
 
 fn authorized_keys_path(config_dir: &PathBuf) -> PathBuf {
     config_dir.join("authorized_keys")
+}
+
+fn passwd_path(config_dir: &PathBuf) -> PathBuf {
+    config_dir.join("passwd")
 }
 
 fn deserialize_authorized_keys(
@@ -111,6 +124,44 @@ fn read_authorized_keys(
     deserialize_authorized_keys(&contents)
 }
 
+fn hash_password(password: &str) -> Result<String, pbkdf2::password_hash::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Pbkdf2
+        .hash_password(password.as_bytes(), &salt)?
+        .to_string();
+    Ok(hash)
+}
+
+fn verify_password(
+    password: &str,
+    expected_hash: &str,
+) -> Result<(), pbkdf2::password_hash::Error> {
+    let parsed_hash = PasswordHash::new(&expected_hash)?;
+    Pbkdf2.verify_password(password.as_bytes(), &parsed_hash)
+}
+
+fn read_passwd(config_dir: &PathBuf) -> Result<String, anyhow::Error> {
+    let passwd_path = passwd_path(config_dir);
+
+    if !passwd_path.exists() {
+        debug!("Creating passwd file");
+
+        // Create the file and its parent directories if they don't exist
+        if let Some(parent) = passwd_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Hash the default pw and write it to the newly created file
+        let pw_hash = hash_password(DEFAULT_PASSWORD)
+            .map_err(|e| anyhow::anyhow!("Failed hashing default pw, err: {e:?}"))?;
+        std::fs::write(&passwd_path, pw_hash)?;
+    }
+
+    debug!("Reading passwd");
+    std::fs::read_to_string(&passwd_path)
+        .map_err(|e| anyhow::anyhow!("Failed reading passwd from file, err: {e:?}"))
+}
+
 struct SshSession {
     config_dir: PathBuf,
     clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
@@ -142,6 +193,14 @@ impl SshSession {
 
         Ok(())
     }
+
+    fn set_new_password(&mut self, password: &str) -> anyhow::Result<()> {
+        let hash = hash_password(password)
+            .map_err(|e| anyhow::anyhow!("Failed to hash password, err: {e:?}"))?;
+
+        std::fs::write(passwd_path(&self.config_dir), &hash.into_bytes())?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -150,7 +209,16 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
         info!("credentials: {}, {}", user, password);
-        Ok(Auth::Accept)
+        let expected_hash = read_passwd(&self.config_dir)?;
+
+        if let Ok(_) = verify_password(password, &expected_hash) {
+            Ok(Auth::Accept)
+        } else {
+            debug!("Rejected user: {user} with password-auth");
+            Ok(Auth::Reject {
+                proceed_with_methods: Some(russh::MethodSet::PUBLICKEY),
+            })
+        }
     }
 
     async fn auth_publickey(
@@ -387,6 +455,65 @@ impl russh::server::Handler for SshSession {
 
             pty_writer.flush().map_err(anyhow::Error::new)?;
         }
+        Ok(())
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel_id: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        // TODO: Make this "a bit" nicer..
+        if data.starts_with(b"passwd") {
+            let expected_pw_hash = read_passwd(&self.config_dir)?;
+
+            if let Ok(passwd_line) = String::from_utf8(data.to_vec()) {
+                let mut parts = passwd_line.split(" ");
+                if parts.next() != Some("passwd") {
+                    session.data(channel_id, CryptoVec::from_slice(b"Invalid command\n"));
+                    session.channel_success(channel_id);
+                    session.close(channel_id);
+                    return Err(anyhow::anyhow!("Invalid command supplied"));
+                }
+                let old_pw = parts.next();
+                let new_pw = parts.next();
+
+                match (old_pw, new_pw) {
+                    (Some(old_pw), Some(new_pw)) => {
+                        if let Ok(_) = verify_password(old_pw, &expected_pw_hash) {
+                            // All checks passed, setting new password
+                            self.set_new_password(new_pw)?;
+                            session.data(
+                                channel_id,
+                                CryptoVec::from_slice(b"New password set successfully!\n"),
+                            );
+                        } else {
+                            session.data(channel_id, CryptoVec::from_slice(b"Invalid password\n"));
+                        }
+                    }
+                    (_, _) => {
+                        session.data(channel_id, CryptoVec::from_slice(b"Invalid argument count\n"));
+                    }
+                }
+            } else {
+                session.data(
+                    channel_id,
+                    CryptoVec::from_slice(b"Failed to handle passwd input\n"),
+                );
+            }
+        } else {
+            // TODO: Support spawning arbitrary / interactive commands
+            session.data(
+                channel_id,
+                CryptoVec::from_slice(
+                    b"Currently only the command 'passwd <old pw> <new pw>' is supported\n",
+                ),
+            );
+        }
+
+        session.channel_success(channel_id);
+        session.close(channel_id);
         Ok(())
     }
 }
