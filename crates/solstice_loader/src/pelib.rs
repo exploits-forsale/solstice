@@ -730,7 +730,7 @@ pub unsafe fn patch_ldr_data(
         // Get the TLS entry for the current module and remove it from the list
         if let Some(window) = ntdll_text
             .windows(LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES.len())
-            .find(|window| window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES)
+            .find(|&window| window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES)
         {
             // Get this window's pointer. It will land us in the middle of this function though
             let mut ptr = window.as_ptr();
@@ -750,7 +750,7 @@ pub unsafe fn patch_ldr_data(
 
         if let Some(window) = ntdll_text
             .windows(LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES.len())
-            .find(|window| window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES)
+            .find(|&window| window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES)
         {
             // Get this window's pointer. It will land us in the middle of this function though
             let mut ptr = window.as_ptr();
