@@ -726,7 +726,6 @@ pub unsafe fn patch_ldr_data(
                                 ptr = ptr.offset(-1);
                             }
 
-                            // Get this window's pointer and move backwards to find the start of the fn
                             #[allow(non_snake_case)]
                             let LdrpReleaseTlsEntry: LdrpReleaseTlsEntryFn =
                                 core::mem::transmute(ptr);
