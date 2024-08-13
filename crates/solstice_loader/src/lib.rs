@@ -181,11 +181,7 @@ unsafe fn reflective_loader_impl(context: LoaderContext) {
     patch_cli_args(context.args.clone(), context.modules.kernelbase);
 
     // Patch the PEB
-    patch_peb(
-        context.args,
-        context.image_name,
-        context.fns.virtual_protect,
-    );
+    patch_peb(context.args, context.image_name);
 
     #[cfg(target_arch = "x86_64")]
     let entrypoint = (baseptr as usize

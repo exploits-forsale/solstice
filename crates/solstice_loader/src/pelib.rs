@@ -570,19 +570,8 @@ pub fn write_import_table(
 }
 
 /// Patches the PEB to reflect the new image command line arguments
-pub unsafe fn patch_peb(
-    args: Option<&[u16]>,
-    image_name: Option<&[u16]>,
-    virtual_protect: VirtualProtectFn,
-) {
+pub unsafe fn patch_peb(args: Option<&[u16]>, image_name: Option<&[u16]>) {
     let peb = (*teb()).ProcessEnvironmentBlock;
-    let mut old_permissions = 0u32;
-    (virtual_protect)(
-        peb as *const _,
-        core::mem::size_of::<PEB>(),
-        PAGE_READWRITE,
-        &mut old_permissions as *mut _,
-    );
 
     if let Some(args) = args {
         let len = args.len() * core::mem::size_of::<u16>();
