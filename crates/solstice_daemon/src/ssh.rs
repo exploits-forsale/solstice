@@ -46,6 +46,7 @@ struct PtyStream {
     reader: Mutex<Box<dyn Read + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     slave: Mutex<Box<dyn SlavePty + Send>>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
 }
 
 #[derive(Clone)]
@@ -394,6 +395,31 @@ impl russh::server::Handler for SshSession {
         Ok(())
     }
 
+    async fn window_change_request(
+        &mut self,
+        channel_id: ChannelId,
+        col_width: u32,
+        row_height: u32,
+        pix_width: u32,
+        pix_height: u32,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        info!("Requesting window change {channel_id} {col_width}x{row_height}, {pix_width}x{pix_height}");
+
+        let clone = self.ptys.clone();
+        let ptys_guard = clone.lock().await;
+        let pty = ptys_guard.get(&channel_id).unwrap();
+
+        let _ = ptys_guard.get(&channel_id).unwrap().master.lock().await.resize(PtySize {
+            rows: row_height as u16,
+            cols: col_width as u16,
+            pixel_width: pix_width as u16,
+            pixel_height: pix_height as u16,
+        });
+
+        Ok(())
+    }
+
     async fn pty_request(
         &mut self,
         channel_id: ChannelId,
@@ -427,13 +453,14 @@ impl russh::server::Handler for SshSession {
         let master_reader = Mutex::new(master.try_clone_reader().unwrap());
         let master_writer = Mutex::new(master.take_writer().unwrap());
 
-        let p = Mutex::new(master);
+        let master_lock = Mutex::new(master);
 
         self.ptys.lock().await.insert(
             channel_id,
             Arc::new(PtyStream {
                 reader: master_reader,
                 writer: master_writer,
+                master: master_lock,
                 slave: Mutex::new(slave),
             }),
         );
