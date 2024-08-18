@@ -138,6 +138,10 @@ impl SftpSession {
             language_tag: "en-US".to_string(),
         }
     }
+
+    fn set_file_attributes(&self, path: &PathBuf, attrs: &FileAttributes) {
+        // TODO: Implement me
+    }
 }
 
 #[async_trait]
@@ -477,7 +481,11 @@ impl russh_sftp::server::Handler for SftpSession {
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         debug!("setstat: {id} {path} {attrs:?}");
-        Err(self.unimplemented())
+        let path = unix_like_path_to_windows_path(&path)
+            .ok_or(StatusCode::NoSuchFile)?;
+
+        self.set_file_attributes(&path, &attrs);
+        Ok(self.success(id))
     }
 
     /// Called on SSH_FXP_FSETSTAT
@@ -488,7 +496,14 @@ impl russh_sftp::server::Handler for SftpSession {
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         debug!("fsetstat: {id} {handle} {attrs:?}");
-        Err(self.unimplemented())
+        let path = &self
+            .handles
+            .get(&handle)
+            .ok_or(StatusCode::NoSuchFile)?
+            .path;
+
+        self.set_file_attributes(path, &attrs);
+        Ok(self.success(id))
     }
 
     /// Called on SSH_FXP_REMOVE.
