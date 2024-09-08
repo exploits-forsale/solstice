@@ -33,6 +33,34 @@ pub struct DynamicFile {
     pub name_len: [u8; 4],
 }
 
+fn start_payload_logger() {
+    let listener = TcpListener::bind("0.0.0.0:7070").unwrap();
+    info!("Payload logger listening...");
+
+    for stream in listener.incoming() {
+        std::thread::spawn(move || {
+            let mut stream = stream.unwrap();
+            info!(
+                "Payload logger connection from {} established!",
+                stream.peer_addr().expect("failed to get peer address")
+            );
+            let mut buffer = [0u8; 1024];
+            while let Ok(count) = stream.read(&mut buffer) {
+                match std::str::from_utf8(&buffer[..count]) {
+                    Ok(str) => {
+                        println!("{}", str);
+                    }
+                    Err(_) => {
+                        error!("Payload logger sent non-UTF8 data")
+                    }
+                }
+            }
+            info!("Xbox disconnected");
+            println!("")
+        });
+    }
+}
+
 fn start_file_listener() {
     let listener = TcpListener::bind("0.0.0.0:8081").unwrap();
     info!("File listener listening...");
@@ -71,6 +99,7 @@ fn main() -> std::io::Result<()> {
     }
 
     std::thread::spawn(start_file_listener);
+    std::thread::spawn(start_payload_logger);
 
     let listener = TcpListener::bind("0.0.0.0:8080").unwrap();
     info!("Server listening...");
