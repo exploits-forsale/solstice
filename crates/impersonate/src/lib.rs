@@ -104,6 +104,10 @@ impl Impersonate {
         PrivilegeCheck(self.original_token, &mut priv_set, &mut priv_enabled)?;
         
         debug!("SeDebugPrivilege is: {:?}", priv_enabled);
+
+        if priv_enabled.0 == 0 {
+            return Err("Failed to set enable debug privilege".into());
+        }
         }
 
         Ok(())
@@ -113,7 +117,9 @@ impl Impersonate {
         unsafe {
             let proc_handle = OpenProcess(PROCESS_QUERY_INFORMATION, TRUE, pid)?;
             let new_token = Impersonate::get_impersonation_token(proc_handle)?;
-            SetThreadToken(None, new_token)?;
+            if let Err(e) = SetThreadToken(None, new_token) {
+                return Err("Failed to set thread token, err: {e:?}".into());
+            }
         }
         Ok(())
     }
