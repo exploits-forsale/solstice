@@ -40,15 +40,19 @@ fn start_payload_logger() {
     for stream in listener.incoming() {
         std::thread::spawn(move || {
             let mut stream = stream.unwrap();
-            info!(
-                "Payload logger connection from {} established!",
-                stream.peer_addr().expect("failed to get peer address")
-            );
+            let peer_addr = stream.peer_addr().expect("failed to get peer address");
+            info!("Payload logger connection from {} established!", &peer_addr);
             let mut buffer = [0u8; 1024];
             while let Ok(count) = stream.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+
                 match std::str::from_utf8(&buffer[..count]) {
                     Ok(str) => {
-                        println!("{}", str);
+                        if !str.is_empty() {
+                            print!("{}", str);
+                        }
                     }
                     Err(_) => {
                         error!("Payload logger sent non-UTF8 data")
@@ -56,6 +60,8 @@ fn start_payload_logger() {
                 }
             }
             info!("Xbox disconnected");
+            info!("If payload succeded, you can connect to the Xbox via ssh. Use any username and password \"xbox\"");
+            info!("For example: ssh solstice@{}", peer_addr.ip());
             println!("")
         });
     }
