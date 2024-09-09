@@ -37,20 +37,21 @@ build-exploit features=default-features:
 generate features=default-features:
     just --justfile {{justfile()}} build-exploit {{features}}
     just --justfile {{justfile()}} build-test-program-rust {{features}}
-    xcopy /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
-    xcopy /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
-    xcopy /y outputs\\gamescript_autosave.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
+    xcopy /f /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
+    xcopy /f /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
+    xcopy /f /y outputs\\gamescript_autosave.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
 
 generate-dev features=default-features:
     just --justfile {{justfile()}} build-exploit {{features}}
     just --justfile {{justfile()}} build-test-program-rust network,{{features}}
-    xcopy /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
-    xcopy /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
-    xcopy /y outputs\\gamescript_autosave_network.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
+    xcopy /f /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
+    xcopy /f /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
+    xcopy /f /y outputs\\gamescript_autosave_network.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
 
 prepare-for-deployment:
     just --justfile {{justfile()}} build-exploit
     just --justfile {{justfile()}} build-server-internal
     just --justfile {{justfile()}} build-daemon-internal firewall
-    xcopy /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
-    xcopy /y outputs\\gamescript_autosave_network.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
+    xcopy /f /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin .\\outputs\\stage2.bin
+    xcopy /f /y crates\\payload_server\\target\\release\\payload_server.exe .\\outputs\\payload_server.exe
+    xcopy /f /y crates\\solstice_daemon\\target\\release\\solstice_Daemon.exe .\\outputs\\srv.exe
