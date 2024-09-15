@@ -202,7 +202,20 @@ impl russh_sftp::server::Handler for SftpSession {
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         info!("opendir: {}", &path);
         let pathbuf = PathBuf::from(&path);
-        self.handles.insert(path.clone(), InternalHandle::new_dir(&pathbuf));
+        match unix_like_path_to_windows_path(&path) {
+            Some(winpath) => {
+                if !winpath.is_dir() {
+                    error!("opendir: Translated directory {winpath:?} does not exist");
+                    return Err(StatusCode::NoSuchFile);
+                }
+                self.handles.insert(path.clone(), InternalHandle::new_dir(&pathbuf));
+            },
+            None => {
+                error!("opendir: Path conversion for {path:?} failed");
+                return Err(StatusCode::NoSuchFile);
+            },
+        }
+
         Ok(Handle { id, handle: path })
     }
 
@@ -324,8 +337,12 @@ impl russh_sftp::server::Handler for SftpSession {
     ) -> Result<Handle, Self::Error> {
         debug!("open: {id} {filename} {pflags:?} {attrs:?}");
         if let Some(path) = unix_like_path_to_windows_path(&filename) {
-            if !path.exists() && !pflags.contains(OpenFlags::CREATE) {
+            if !path.is_file() && !pflags.contains(OpenFlags::CREATE) {
+                error!("Failed to open non-existant file {path:?} with flags {pflags:?}");
                 return Err(StatusCode::NoSuchFile);
+            } else if path.is_dir() {
+                error!("Cannot open dir {path:?} as file");
+                return Err(StatusCode::Failure);
             }
 
             let file = OpenOptions::new()
@@ -336,7 +353,10 @@ impl russh_sftp::server::Handler for SftpSession {
                 .append(pflags.contains(OpenFlags::APPEND))
                 .open(&path)
                 .await
-                .map_err(|_e| StatusCode::NoSuchFile)?;
+                .map_err(|e| {
+                    error!("Failed to open file {path:?} with flags {pflags:?}, err: {e:?}");
+                    StatusCode::PermissionDenied
+                })?;
 
             self.handles.insert(
                 filename.clone(),
@@ -351,6 +371,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 handle: filename,
             })
         } else {
+            error!("open: Path conversion for {filename:?} failed");
             Err(StatusCode::NoSuchFile)
         }
     }
