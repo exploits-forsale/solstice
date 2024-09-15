@@ -431,7 +431,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .await
                     .context("writing file")
                 {
-                    Ok(_) => Err(StatusCode::Ok),
+                    Ok(_) => Ok(self.success(id)),
                     Err(e) => {
                         error!("{:?}", e);
                         Err(StatusCode::Failure)
@@ -600,7 +600,7 @@ impl russh_sftp::server::Handler for SftpSession {
         &mut self,
         id: u32,
         path: String,
-        attrs: FileAttributes,
+        _attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         debug!("mkdir: {id} {path}");
         if let Some(path) = unix_like_path_to_windows_path(&path) {
@@ -803,7 +803,7 @@ impl russh_sftp::server::Handler for SftpSession {
         request: String,
         data: Vec<u8>,
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
-        debug!("extended: {id} {request}");
+        debug!("extended: {id} {request} {data:?}");
         Err(self.unimplemented())
     }
 }
