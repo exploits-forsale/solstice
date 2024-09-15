@@ -10,8 +10,8 @@ checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
 name = "compiler_builtins"
-version = "0.1.113"
-source = "git+https://github.com/rust-lang/compiler-builtins#9f7ff2202c6fb80882849f4520331c82b14f8fb3"
+version = "0.1.126"
+source = "git+https://github.com/rust-lang/compiler-builtins#4797774cd72e453e30785cfee684aaf68e16e03e"
 
 [[package]]
 name = "const-str"
