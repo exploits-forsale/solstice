@@ -144,14 +144,6 @@ async fn set_file_attributes(file: &mut tokio::fs::File, target_attrs: &FileAttr
         }
     }
 
-    let mut current_permissions = metadata.permissions();
-    if current_permissions.readonly() != target_attrs.permissions().is_readonly() {
-        debug!("Toggling read-only attribute for file {file:?}");
-        current_permissions.set_readonly(target_attrs.permissions().is_readonly());
-        file.set_permissions(current_permissions)
-            .await?;
-    }
-
     Ok(())
 }
 
