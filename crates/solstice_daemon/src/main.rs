@@ -18,9 +18,12 @@ use std::path;
 use tracing::debug;
 use tracing::error;
 
+use impersonate::Impersonate;
+
 mod firewall;
 mod sftp;
 mod ssh;
+mod toast;
 
 // Janky hack to address https://github.com/tokio-rs/tracing/issues/1817
 struct NewType(Pretty);
@@ -89,6 +92,21 @@ async fn main() {
         }
     }
     debug!("using config dir: {config_dir:?}");
+
+    let mut impersonate = Impersonate::create();
+    match impersonate.do_impersonate_process_name("XboxUI.exe") {
+        Ok(_) => {
+            if let Err(e) = toast::show_toast() {
+                error!("Failed to show toast notification: {:?}", e);
+            }
+            if let Err(e) = Impersonate::revert_to_self() {
+                error!("Failed to revert impersonation: {:?}", e);
+            }
+        },
+        Err(e) => {
+            error!("Failed to impersonate to show toast notification, err={e:?}");
+        }
+    }
 
     if let Err(e) = crate::ssh::start_ssh_server(SSH_LISTEN_PORT, config_dir).await {
         error!("{}", e);

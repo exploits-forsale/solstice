@@ -766,6 +766,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "impersonate"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1766,6 +1774,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "impersonate",
  "pbkdf2 0.12.2",
  "portable-pty",
  "rand_core",
