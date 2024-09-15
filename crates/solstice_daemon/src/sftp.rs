@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::SeekFrom;
+use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -129,6 +130,29 @@ fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
     }
 }
 
+async fn set_file_attributes(file: &mut tokio::fs::File, target_attrs: &FileAttributes) -> Result<(), std::io::Error> {
+    let metadata = file
+        .metadata()
+        .await?;
+
+    if let Some(target_filesize) = target_attrs.size {
+        if target_filesize <= metadata.file_size() {
+            // Truncate file
+            file.set_len(target_filesize).await?;
+        } else {
+            warn!("Request to set filesize bigger than actual file ?! actual size: {:?}, requested: {:?}", metadata.file_size(), target_filesize);
+        }
+    }
+
+    Ok(())
+}
+
+async fn set_dir_attributes(_path: &PathBuf,  _target_attrs: &FileAttributes) -> Result<(), std::io::Error> {
+    // TODO: Implement me
+    // .. or does this even make sense for dirs?
+    Ok(())
+}
+
 impl SftpSession {
     fn success(&self, id: u32) -> Status {
         Status {
@@ -137,10 +161,6 @@ impl SftpSession {
             error_message: "Ok".to_string(),
             language_tag: "en-US".to_string(),
         }
-    }
-
-    fn set_file_attributes(&self, path: &PathBuf, attrs: &FileAttributes) {
-        // TODO: Implement me
     }
 }
 
@@ -403,7 +423,7 @@ impl russh_sftp::server::Handler for SftpSession {
                     .await
                     .context("writing file")
                 {
-                    Ok(_) => Err(StatusCode::Ok),
+                    Ok(_) => Ok(self.success(id)),
                     Err(e) => {
                         error!("{:?}", e);
                         Err(StatusCode::Failure)
@@ -484,7 +504,29 @@ impl russh_sftp::server::Handler for SftpSession {
         let path = unix_like_path_to_windows_path(&path)
             .ok_or(StatusCode::NoSuchFile)?;
 
-        self.set_file_attributes(&path, &attrs);
+        if path.is_file() {
+            let mut handle = OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .await
+                .map_err(|_|StatusCode::NoSuchFile)?;
+            set_file_attributes(&mut handle, &attrs)
+                .await
+                .map_err(|e|{
+                    error!("Failed to set file attributes {attrs:?}, err: {e:?}");
+                    StatusCode::Failure
+                })?;
+        } else if path.is_dir() {
+            set_dir_attributes(&path, &attrs)
+                .await
+                .map_err(|e|{
+                    error!("Failed to set dir attributes {attrs:?}, err: {e:?}");
+                    StatusCode::Failure
+                })?;
+        } else if path.is_symlink() {
+            warn!("setstat not implemented for symlink");
+        }
+
         Ok(self.success(id))
     }
 
@@ -496,13 +538,30 @@ impl russh_sftp::server::Handler for SftpSession {
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         debug!("fsetstat: {id} {handle} {attrs:?}");
-        let path = &self
+        let path = self
             .handles
-            .get(&handle)
-            .ok_or(StatusCode::NoSuchFile)?
-            .path;
+            .get_mut(&handle)
+            .ok_or(StatusCode::NoSuchFile)?;
 
-        self.set_file_attributes(path, &attrs);
+        match &mut path.handle {
+            OurHandle::File(fhandle) => {
+                set_file_attributes(fhandle, &attrs)
+                .await
+                .map_err(|e|{
+                    error!("Failed to set file attributes {attrs:?}, err: {e:?}");
+                    StatusCode::Failure
+                })?;
+            },
+            OurHandle::Dir(_) => {
+                set_dir_attributes(&path.path, &attrs)
+                .await
+                .map_err(|e|{
+                    error!("Failed to set dir attributes {attrs:?}, err: {e:?}");
+                    StatusCode::Failure
+                })?;
+            },
+        }
+
         Ok(self.success(id))
     }
 
@@ -533,7 +592,7 @@ impl russh_sftp::server::Handler for SftpSession {
         &mut self,
         id: u32,
         path: String,
-        attrs: FileAttributes,
+        _attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         debug!("mkdir: {id} {path}");
         if let Some(path) = unix_like_path_to_windows_path(&path) {
@@ -736,7 +795,7 @@ impl russh_sftp::server::Handler for SftpSession {
         request: String,
         data: Vec<u8>,
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
-        debug!("extended: {id} {request}");
+        debug!("extended: {id} {request} {data:?}");
         Err(self.unimplemented())
     }
 }
