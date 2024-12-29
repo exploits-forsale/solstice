@@ -86,7 +86,7 @@ pub struct IO_STATUS_BLOCK {
     _2: PULONG,
 }
 /// A specialized `Result` type for NT operations.
-pub type Result<T> = ::core::result::Result<T, Status>;
+// pub type Result<T> = ::core::result::Result<T, Status>;
 
 /// NT Status code.
 #[repr(C)]

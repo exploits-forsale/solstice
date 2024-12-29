@@ -31,7 +31,12 @@ build-test-program-rust features=default-features:
 build-exploit features=default-features:
     just --justfile {{justfile()}} build-stage1 {{features}}
     just --justfile {{justfile()}} build-stage1-network {{features}}
-    just --justfile {{justfile()}} build-stage2 {{features}}
+    just --justfile {{justfile()}} build-stage2 filesystem,{{features}}
+    cd ./crates/shellcode_gen && cargo run --release -- ../../outputs/
+
+generate-standalone-stage2 run_exe:
+    echo F|xcopy /f /y {{run_exe}} crates\\shellcode_stage2\\res\\run.exe
+    just --justfile {{justfile()}} build-stage2
     cd ./crates/shellcode_gen && cargo run --release -- ../../outputs/
 
 generate features=default-features:

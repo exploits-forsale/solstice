@@ -8,6 +8,7 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
@@ -31,6 +32,18 @@ const STAGE3_ENV_ARGS_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\a
 const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x20000001;
 const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x20000002;
 const STAGE2_ERROR_INVALID_UTF8: u64 = 0x20000003;
+
+#[cfg(not(feature = "filesystem"))]
+static PE_TO_LOAD: &[u8] = include_bytes!("../res/run.exe");
+
+struct DynamicModuleInfo {
+    pe_data: Box<[u8], WinGlobalAlloc>,
+    args: Option<Vec<u16, WinGlobalAlloc>>,
+    /// SAFETY: this is really only here to ensure image_name_ptr is valid if it points into dynamic_image_name
+    dynamic_image_name: Option<Vec<u8, WinGlobalAlloc>>,
+    image_name_ptr: *const u8,
+    image_name_len: usize,
+}
 
 #[no_mangle]
 pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
@@ -67,7 +80,6 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
     let GetProcAddress = fetch_get_proc_address(kernelbase_ptr);
     let LoadLibraryA = fetch_load_library(kernelbase_ptr);
     let CreateThread = fetch_create_thread(kernelbase_ptr);
-    let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
 
     // Kernel32 imports
     let RtlAddFunctionTable = None; //kernel32_ptr.clone().map(fetch_rtl_add_fn_table);
@@ -75,12 +87,131 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
     let allocator = WinGlobalAlloc::new(kernelbase_ptr);
 
     let GetModuleHandleA = fetch_get_module_handle(kernelbase_ptr);
+    let runtime_fns = RuntimeFns {
+        virtual_alloc: VirtualAlloc,
+        virtual_protect: VirtualProtect,
+        get_proc_address_fn: GetProcAddress,
+        load_library_fn: LoadLibraryA,
+        // TODO
+        create_thread_fn: CreateThread,
+        get_module_handle_fn: GetModuleHandleA,
+        rtl_add_function_table_fn: RtlAddFunctionTable,
+    };
+
+    let dependent_modules = DependentModules {
+        kernelbase: kernelbase_ptr as *mut _,
+    };
+
+    #[cfg(feature = "filesystem")]
+    let mut module_info = load_pe_data_from_disk(args, kernelbase_ptr, &runtime_fns, &allocator);
+    #[cfg(feature = "filesystem")]
+    let loader_context = match &mut module_info {
+        Ok(module_info) => {
+            // SAFETY: the image_name_len comes from either a safely-allocated vec or
+            // the name length calculated via null terminator, which we have to trust.
+            let image_name_utf16 = unsafe {
+                match core::str::from_utf8(core::slice::from_raw_parts(
+                    module_info.image_name_ptr,
+                    module_info.image_name_len,
+                )) {
+                    Ok(name) => utf8_to_utf16(name, allocator.clone()),
+                    Err(_) => return STAGE2_ERROR_INVALID_UTF8,
+                }
+            };
+
+            // These will last for the duration of the program, so let's leak them
+            let image_name_utf16: &'static [u16] = &*image_name_utf16.leak();
+
+            // Default to using the image name as args
+            let stage3_args: Option<&'static [u16]> = module_info
+                .args
+                .take()
+                .map(|args| {
+                    let args: &'static [u16] = &*args.leak();
+                    args
+                })
+                .or(Some(image_name_utf16));
+
+            LoaderContext::<'_, 'static> {
+                buffer: &module_info.pe_data,
+                image_name: Some(image_name_utf16),
+                args: stage3_args,
+                modules: dependent_modules,
+                fns: runtime_fns,
+            }
+        }
+        Err(status) => {
+            return *status;
+        }
+    };
+
+    #[cfg(not(feature = "filesystem"))]
+    let loader_context = {
+        let mut image_name = unsafe { utf8_to_utf16("run.exe", allocator.clone()) };
+        image_name.push(0x0);
+        let image_name_utf16: &'static [u16] = image_name.leak();
+
+        LoaderContext {
+            buffer: PE_TO_LOAD,
+            image_name: Some(image_name_utf16),
+            args: Some(image_name_utf16),
+            modules: dependent_modules,
+            fns: runtime_fns,
+        }
+    };
+
+    // Pause all other threads
+    unsafe {
+        shellcode_utils::suspend_threads(kernel32_ptr.unwrap(), kernelbase_ptr);
+    }
+
+    debug_print!("Attempting to load PE");
+    unsafe {
+        solstice_loader::reflective_loader(loader_context);
+    }
+
+    0x1337
+}
+
+// #[allow(unused_attributes)]
+// #[cfg(target_env = "msvc")]
+// #[link_args = "/GS- /MERGE:.rdata=.text /MERGE:.pdata=.text /NODEFAULTLIB /EMITPOGOPHASEINFO /DEBUG:NONE"]
+// extern "C" {}
+
+#[cfg(feature = "filesystem")]
+#[inline(always)]
+fn load_pe_data_from_disk(
+    shellcode_args: *const ShellcodeArgs,
+    kernelbase_ptr: PVOID,
+    runtime_funs: &RuntimeFns,
+    allocator: &WinGlobalAlloc,
+) -> Result<DynamicModuleInfo, u64> {
+    #[cfg(feature = "debug")]
+    let OutputDebugStringA = fetch_output_debug_string(kernelbase_ptr);
+    macro_rules! debug_print {
+        ($msg:expr) => {
+            #[cfg(feature = "debug")]
+            unsafe {
+                OutputDebugStringA(concat!($msg, "\n\0").as_ptr() as _)
+            }
+        };
+    }
+    macro_rules! debug_print2 {
+        ($msg:expr) => {
+            #[cfg(feature = "debug")]
+            unsafe {
+                OutputDebugStringA($msg as _)
+            }
+        };
+    }
+
+    let GetFullPathNameA = fetch_get_full_path_name(kernelbase_ptr);
     let ExpandEnvironmentStringsA = fetch_expand_environment_strings(kernelbase_ptr);
 
     // Get the full image name without the ..\ and all other
     // unnecessary path characters.
     debug_print!("Getting dynamic image name");
-    let dynamic_image_name = if args.is_null() {
+    let dynamic_image_name = if shellcode_args.is_null() {
         debug_print!("args are null -- generating image name");
         unsafe {
             let mut stage3_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
@@ -99,7 +230,8 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
             );
 
             // Allocate some memory for the image
-            let mut image_full_name = Vec::with_capacity_in(image_name_length as usize, &allocator);
+            let mut image_full_name =
+                Vec::with_capacity_in(image_name_length as usize, allocator.clone());
 
             // Get the full path name
             let image_full_name_len = (GetFullPathNameA)(
@@ -120,10 +252,11 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
 
     debug_print!("Getting image ptr");
     let (image_name_ptr, image_name_len) = dynamic_image_name
+        .as_ref()
         .map(|image_name| (image_name.as_ptr(), image_name.len()))
         .unwrap_or_else(|| unsafe {
             debug_print!("Calculating str len");
-            let image_name_ptr = (*args).image_name;
+            let image_name_ptr = (*shellcode_args).image_name;
             let mut counter = 0;
             let image_name_len = loop {
                 if *image_name_ptr.offset(counter) == 0 {
@@ -141,7 +274,7 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
         create_file: fetch_create_file(kernelbase_ptr),
         read_file: fetch_read_file(kernelbase_ptr),
         get_size: fetch_get_file_size(kernelbase_ptr),
-        virtual_alloc: VirtualAlloc,
+        virtual_alloc: runtime_funs.virtual_alloc,
         close_handle: fetch_close_handle(kernelbase_ptr),
     };
 
@@ -149,10 +282,10 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
     // to signal which stage failed
     debug_print!("Getting stage3 reader");
     debug_print2!(image_name_ptr);
-    let stage3_reader = FileReader::open(image_name_ptr, &file_funcs, &allocator);
+    let stage3_reader = FileReader::open(image_name_ptr, &file_funcs, allocator.clone());
 
     if stage3_reader.is_err() {
-        return STAGE2_ERROR_FILE_OPEN_FAILED;
+        return Err(STAGE2_ERROR_FILE_OPEN_FAILED);
     }
     let mut stage3_reader = unsafe { stage3_reader.unwrap_unchecked() };
 
@@ -161,7 +294,7 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
     let pe_data = match stage3_reader.read_all() {
         Ok(data) => data,
         Err(FileReaderError::ReadFailed) => {
-            return STAGE2_ERROR_FILE_READ_FAILED;
+            return Err(STAGE2_ERROR_FILE_READ_FAILED);
         }
         Err(FileReaderError::OpenFailed) => {
             // Should be impossible but we'll handle it anyways for completeness
@@ -173,7 +306,7 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
 
     debug_print!("Getting stage3 args");
     // Only read the args.txt file if we weren't provided any args
-    let stage3_args = if args.is_null() {
+    let stage3_args = if shellcode_args.is_null() {
         debug_print!("Getting stage3 args filename");
         // Try loading stage 3's arguments. Fails gracefully if the file does not exist.
         let mut stage3_args_filename: MaybeUninit<[u8; 200]> = MaybeUninit::uninit();
@@ -215,11 +348,11 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
         .or_else(|| {
             // If we weren't provided any args and we failed to read args.txt,
             // then we should have no args.
-            if args.is_null() {
+            if shellcode_args.is_null() {
                 None
             } else {
                 unsafe {
-                    let args_ptr = (*args).image_args;
+                    let args_ptr = (*shellcode_args).image_args;
                     if args_ptr.is_null() {
                         return None;
                     }
@@ -235,7 +368,7 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
 
                     // +1 for the null terminator
                     Some(core::slice::from_raw_parts(
-                        (*args).image_args,
+                        (*shellcode_args).image_args,
                         (args_len as usize) + 1,
                     ))
                 }
@@ -248,7 +381,7 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
                 // A null terminator character isn't necessary since it is already accounted for by `image_name.len()`
                 let args_full_len = args_len + image_name_len + 3;
                 let mut args_with_image_name: Vec<u8, _> =
-                    Vec::with_capacity_in(args_full_len, &allocator);
+                    Vec::with_capacity_in(args_full_len, allocator.clone());
                 let args_with_image_name_ptr = args_with_image_name.as_mut_ptr();
 
                 let mut offset = 0;
@@ -285,64 +418,17 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
                     Err(_) => return None,
                 };
 
-                let args = utf8_to_utf16(utf8_args, &allocator);
+                let args = utf8_to_utf16(utf8_args, allocator.clone());
 
                 Some(args)
             }
         });
 
-    // SAFETY: the image_name_len comes from either a safely-allocated vec or
-    // the name length calculated via null terminator, which we have to trust.
-    let image_name_utf16 = unsafe {
-        match core::str::from_utf8(core::slice::from_raw_parts(image_name_ptr, image_name_len)) {
-            Ok(name) => utf8_to_utf16(name, &allocator),
-            Err(_) => return STAGE2_ERROR_INVALID_UTF8,
-        }
-    };
-
-    // These will last for the duration of the program, so let's leak them
-    let image_name_utf16 = &*image_name_utf16.leak();
-
-    // Default to using the image name as args
-    let stage3_args = stage3_args
-        .map(|args| {
-            let args = &*args.leak();
-            args
-        })
-        .or(Some(image_name_utf16));
-
-    // Pause all other threads
-    unsafe {
-        shellcode_utils::suspend_threads(kernel32_ptr.unwrap(), kernelbase_ptr);
-    }
-
-    debug_print!("Attempting to load PE");
-    let context = LoaderContext {
-        buffer: &pe_data,
-        image_name: Some(image_name_utf16),
-        args: stage3_args.as_deref(),
-        modules: DependentModules {
-            kernelbase: kernelbase_ptr as *mut _,
-        },
-        fns: RuntimeFns {
-            virtual_alloc: VirtualAlloc,
-            virtual_protect: VirtualProtect,
-            get_proc_address_fn: GetProcAddress,
-            load_library_fn: LoadLibraryA,
-            // TODO
-            create_thread_fn: CreateThread,
-            get_module_handle_fn: GetModuleHandleA,
-            rtl_add_function_table_fn: RtlAddFunctionTable,
-        },
-    };
-    unsafe {
-        solstice_loader::reflective_loader(context);
-    }
-
-    0x1337
+    Ok(DynamicModuleInfo {
+        pe_data,
+        args: stage3_args,
+        dynamic_image_name,
+        image_name_ptr,
+        image_name_len,
+    })
 }
-
-// #[allow(unused_attributes)]
-// #[cfg(target_env = "msvc")]
-// #[link_args = "/GS- /MERGE:.rdata=.text /MERGE:.pdata=.text /NODEFAULTLIB /EMITPOGOPHASEINFO /DEBUG:NONE"]
-// extern "C" {}
