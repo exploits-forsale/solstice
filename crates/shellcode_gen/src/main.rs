@@ -32,10 +32,10 @@ fn main() -> Result<()> {
     let stage2_output = rewrite_shellcode(stage2_path)?;
 
     // generate the exploit code to load the stage1 code
-    let gamescript_exploit = generate_gamescript_exploit(&stage1_output)?;
+    let gamescript_exploit = generate_gamescript_exploit(&stage1_output, true)?;
 
     // generate the exploit code to load the stage1 network code
-    let gamescript_network_exploit = generate_network_gamescript_exploit(&stage1_network_output)?;
+    let gamescript_network_exploit = generate_gamescript_exploit(&stage1_network_output, false)?;
 
     if !output_path.exists() {
         std::fs::create_dir(output_path)?;
@@ -159,7 +159,7 @@ const HEXBYTES_COLUMN_BYTE_LENGTH: usize = 10;
 const EXAMPLE_CODE_BITNESS: u32 = 64;
 const EXAMPLE_CODE_RIP: u64 = 0x0000_0001_4000_1000; // 0000 0001 4000 1000
 
-fn generate_gamescript_exploit(shellcode_path: &Path) -> anyhow::Result<String> {
+fn generate_gamescript_exploit(shellcode_path: &Path, is_local_shellcode: bool) -> anyhow::Result<String> {
     // Use decimal encoding to produce a smaller script. Decimal is at most 3
     // chars while hex is at min 3, at most 5.
     let shellcode_data: String = std::fs::read(shellcode_path)?
@@ -169,20 +169,14 @@ fn generate_gamescript_exploit(shellcode_path: &Path) -> anyhow::Result<String> 
         .collect();
 
     let exploit_data = include_str!("../gs_exploit_template.txt");
+    let (shellcode_flavor, ip_notice) = match is_local_shellcode {
+        true => (
+            "LOCAL EXECUTION",
+            "// Host IP is not mandatory for the local-shellcode, it can help with debugging though"
+        ),
+        false => ("NETWORK LOADER", ""),
+    };
 
-    Ok(exploit_data.replace("<SHELLCODE_GEN_PLZ_REPLACE_ME>", &shellcode_data))
-}
-
-fn generate_network_gamescript_exploit(shellcode_path: &Path) -> anyhow::Result<String> {
-    // Use decimal encoding to produce a smaller script. Decimal is at most 3
-    // chars while hex is at min 3, at most 5.
-    let shellcode_data: String = std::fs::read(shellcode_path)?
-        .iter()
-        .map(|b| format!("{}", *b))
-        .intersperse(",".to_string())
-        .collect();
-
-    let exploit_data = include_str!("../gs_exploit_template_network.txt");
     let commit: String = String::from_utf8(
         Command::new("git")
             .arg("rev-parse")
@@ -210,6 +204,8 @@ fn generate_network_gamescript_exploit(shellcode_path: &Path) -> anyhow::Result<
     let commit_date = commit_date.trim();
 
     Ok(exploit_data
+        .replace("<SHELLCODE_FLAVOR>", shellcode_flavor)
+        .replace("<IP_NOTICE>", ip_notice)
         .replace("<SHELLCODE_GEN_PLZ_REPLACE_ME>", &shellcode_data)
         .replace("<HOST_IP>", &include_str!("../../../host_ip.txt"))
         .replace("<GIT_VERSION>", &commit)
