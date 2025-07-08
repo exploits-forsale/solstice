@@ -91,6 +91,14 @@ jobs:
       - name: Bundle binaries
         run: 7z a -tzip Solstice.zip .\release\**
 
+      - name: Update nightly
+        uses: softprops/action-gh-release@v2
+        if: ${{ github.ref == 'refs/heads/main' }}
+        with:
+          files: Solstice.zip
+          prerelease: true
+          tag_name: nightly
+
       - name: Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
