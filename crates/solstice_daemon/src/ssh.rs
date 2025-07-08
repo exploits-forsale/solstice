@@ -37,7 +37,9 @@ use tokio::sync::Mutex;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
+use crate::impersonate::get_token;
 use crate::sftp::SftpSession;
 
 const DEFAULT_PASSWORD: &str = "xbox";
@@ -167,6 +169,7 @@ struct SshSession {
     config_dir: PathBuf,
     clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
     ptys: Arc<Mutex<HashMap<ChannelId, Arc<PtyStream>>>>,
+    username: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for SshSession {
@@ -176,6 +179,7 @@ impl Default for SshSession {
             config_dir: "".into(),
             clients: Arc::new(Mutex::new(HashMap::new())),
             ptys: Arc::new(Mutex::new(HashMap::new())),
+            username: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -213,6 +217,7 @@ impl russh::server::Handler for SshSession {
         let expected_hash = read_passwd(&self.config_dir)?;
 
         if let Ok(_) = verify_password(password, &expected_hash) {
+            let _ = self.username.lock().await.insert(user.to_owned());
             Ok(Auth::Accept)
         } else {
             debug!("Rejected user: {user} with password-auth");
@@ -240,11 +245,13 @@ impl russh::server::Handler for SshSession {
                 error!("{:?}", e);
             } else {
                 // We presumably added the key fine, allow this person in
+                let _ = self.username.lock().await.insert(user.to_owned());
                 return Ok(Auth::Accept);
             }
         }
 
         if keys.contains(public_key) {
+            let _ = self.username.lock().await.insert(user.to_owned());
             info!("User {user} accepted via pubkey auth");
             return Ok(Auth::Accept);
         }
@@ -317,6 +324,7 @@ impl russh::server::Handler for SshSession {
         let handle_waiter = session.handle();
 
         let ptys = self.ptys.clone();
+        let username = self.username.lock().await.clone();
 
         tokio::spawn(async move {
             let pty_cloned = ptys.clone();
@@ -360,10 +368,29 @@ impl russh::server::Handler for SshSession {
             let child_status = tokio::task::spawn_blocking(move || {
                 let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
 
+                let maybe_token = match username.as_deref() {
+                    Some("DefaultAccount") => {
+                        info!("DefaultAccount context was requested...");
+                        match get_token() {
+                            Ok(handle) => {
+                                info!("Acquired DefaultAccount token :)");
+                                Some(handle)
+                            },
+                            Err(err) => {
+                                warn!("Failed to get DefaultAccount token, will continue w/o impersonation, err: {err}");
+                                None
+                            },
+                        }
+                    },
+                    _ => {
+                        None
+                    },
+                };
+
                 let mut child = stream
                     .slave
                     .blocking_lock()
-                    .spawn_command(CommandBuilder::new(shell))
+                    .spawn_command(CommandBuilder::new(shell), maybe_token)
                     .expect("Failed to spawn child process");
                 child.wait().expect("Failed to wait on child process")
             })

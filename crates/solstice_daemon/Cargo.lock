@@ -543,9 +543,8 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "filedescriptor"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7199d965852c3bac31f779ef99cbb4537f80e952e2d6aa0ffeb30cce00f4f46e"
+version = "0.8.3"
+source = "git+https://github.com/tuxuser/wezterm?branch=spawn_command_as_user#9d3dfeb7092995627024042658680fef4eb70b8c"
 dependencies = [
  "libc",
  "thiserror",
@@ -1229,8 +1228,7 @@ dependencies = [
 [[package]]
 name = "portable-pty"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "806ee80c2a03dbe1a9fb9534f8d19e4c0546b790cde8fd1fea9d6390644cb0be"
+source = "git+https://github.com/tuxuser/wezterm?branch=spawn_command_as_user#9d3dfeb7092995627024042658680fef4eb70b8c"
 dependencies = [
  "anyhow",
  "bitflags 1.3.2",
@@ -1776,6 +1774,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "winapi",
  "windows",
  "winreg 0.52.0",
 ]
