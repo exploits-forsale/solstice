@@ -22,7 +22,7 @@ lto = true
 path = "../shellcode_utils"
 
 [dependencies.compiler_builtins]
-git = "https://github.com/rust-lang/compiler-builtins"
+version = "=0.1.126"
 
 [dependencies.solstice_loader]
 path = "../solstice_loader"

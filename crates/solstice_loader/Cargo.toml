@@ -10,7 +10,7 @@ repository = "https://github.com/exploits-forsale/solstice"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.compiler_builtins]
-git = "https://github.com/rust-lang/compiler-builtins"
+version = "=0.1.126"
 default-features = false
 features = ["mem"]
 

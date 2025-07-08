@@ -10,7 +10,7 @@ edition = "2021"
 shellcode_utils = { path = "../shellcode_utils" }
 
 [dependencies.compiler_builtins]
-git = "https://github.com/rust-lang/compiler-builtins"
+version = "=0.1.126"
 features = ["mem"]
 
 [dependencies.windows-sys]
