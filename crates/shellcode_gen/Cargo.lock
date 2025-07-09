@@ -35,6 +35,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "include_optional"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3328afceb205b7534c691f71b12334973dbfdfe0eecb9e345bddfbb925bc55fc"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,6 +116,7 @@ dependencies = [
  "anyhow",
  "goblin",
  "iced-x86",
+ "include_optional",
  "itertools",
 ]
 

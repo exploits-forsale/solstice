@@ -5,6 +5,7 @@ use iced_x86::DecoderOptions;
 use iced_x86::Formatter;
 use iced_x86::Instruction;
 use iced_x86::NasmFormatter;
+use include_optional::include_str_optional;
 use itertools::Itertools;
 use std::fs::File;
 use std::io::prelude::*;
@@ -203,11 +204,14 @@ fn generate_gamescript_exploit(shellcode_path: &Path, is_local_shellcode: bool) 
 
     let commit_date = commit_date.trim();
 
+    let host_ip = include_str_optional!("../../../host_ip.txt")
+        .unwrap_or("[YOUR IP HERE]");
+
     Ok(exploit_data
         .replace("<SHELLCODE_FLAVOR>", shellcode_flavor)
         .replace("<IP_NOTICE>", ip_notice)
         .replace("<SHELLCODE_GEN_PLZ_REPLACE_ME>", &shellcode_data)
-        .replace("<HOST_IP>", &include_str!("../../../host_ip.txt"))
+        .replace("<HOST_IP>", host_ip)
         .replace("<GIT_VERSION>", &commit)
         .replace("<GIT_DATE>", &commit_date))
 }
