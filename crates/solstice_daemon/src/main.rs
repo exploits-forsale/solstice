@@ -21,6 +21,7 @@ use tracing::error;
 mod firewall;
 mod sftp;
 mod ssh;
+mod impersonate;
 
 // Janky hack to address https://github.com/tokio-rs/tracing/issues/1817
 struct NewType(Pretty);
