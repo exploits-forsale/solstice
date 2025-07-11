@@ -17,7 +17,7 @@ use std::env;
 use std::fs::create_dir_all;
 use std::path;
 
-use tracing::debug;
+use tracing::info;
 use tracing::error;
 
 mod directory;
@@ -101,10 +101,10 @@ async fn main() {
         );
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    debug!("daemon started");
-
     #[cfg(feature = "firewall")]
     {
+        info!("disabling firewall...");
+
         if let Err(e) = crate::firewall::disable_firewalls() {
             error!("failed to disable firewall: {:?}", e);
             return;
@@ -117,7 +117,7 @@ async fn main() {
         }
     }
 
-    debug!("starting ssh server");
+    info!("starting ssh server");
     let config_dir = &config_root_dir.join("solstice_ssh");
     if !config_dir.exists() {
         if let Err(e) = create_dir_all(config_dir) {
@@ -125,7 +125,7 @@ async fn main() {
             return;
         }
     }
-    debug!("using config dir: {config_dir:?}");
+    info!("using config dir: {config_dir:?}");
 
     if let Err(e) = crate::ssh::start_ssh_server(args.listen_port, config_dir).await
     {

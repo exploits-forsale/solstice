@@ -39,6 +39,7 @@ use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::trace;
+use tracing::warn;
 
 use crate::directory::wildcard_path_to_filedir_list;
 use crate::impersonate::get_token;
@@ -98,7 +99,7 @@ fn deserialize_authorized_keys(
             if let Ok(parsed_key) = keys::parse_public_key_base64(pubkey) {
                 keys.push(parsed_key);
             } else {
-                info!("Ignoring authorized_key line: {line}");
+                warn!("Ignoring authorized_key line: {line}");
             }
         }
     }
@@ -162,7 +163,7 @@ fn read_passwd(config_dir: &PathBuf) -> Result<String, anyhow::Error> {
         std::fs::write(&passwd_path, pw_hash)?;
     }
 
-    debug!("Reading passwd");
+    trace!("Reading passwd");
     std::fs::read_to_string(&passwd_path)
         .map_err(|e| anyhow::anyhow!("Failed reading passwd from file, err: {e:?}"))
 }
@@ -241,7 +242,7 @@ impl russh::server::Handler for SshSession {
             let _ = self.username.lock().await.insert(user.to_owned());
             Ok(Auth::Accept)
         } else {
-            debug!("Rejected user: {user} with password-auth");
+            warn!("Rejected user: {user} with password-auth");
             let mut methodset = MethodSet::empty();
             methodset.push(MethodKind::PublicKey);
 
@@ -277,11 +278,11 @@ impl russh::server::Handler for SshSession {
 
         if keys.contains(public_key) {
             let _ = self.username.lock().await.insert(user.to_owned());
-            info!("User {user} accepted via pubkey auth");
+            debug!("User {user} accepted via pubkey auth");
             return Ok(Auth::Accept);
         }
 
-        info!("Rejecting {user}");
+        warn!("Rejecting {user}");
 
         Ok(Auth::Reject {
             proceed_with_methods: (None),
@@ -325,7 +326,7 @@ impl russh::server::Handler for SshSession {
         name: &str,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        info!("subsystem: {}", name);
+        trace!("subsystem: {}", name);
 
         if name == "sftp" {
             let channel = self.get_channel(channel_id).await;
@@ -344,7 +345,7 @@ impl russh::server::Handler for SshSession {
         channel_id: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        info!("Requesting PTY");
+        trace!("Requesting shell");
 
         let handle_reader = session.handle();
         let handle_waiter = session.handle();
@@ -375,16 +376,16 @@ impl russh::server::Handler for SshSession {
                                 .data(channel_id, CryptoVec::from_slice(&buffer[0..n]))
                                 .await
                             {
-                                error!("Error sending PTY data to client: {:?}", e);
+                                warn!("Error sending PTY data to client: {:?}", e);
                                 break;
                             }
                         }
                         Ok(Err(e)) => {
-                            error!("PTY read error: {:?}", e);
+                            warn!("PTY read error: {:?}", e);
                             break;
                         }
                         Err(e) => {
-                            error!("Join error: {:?}", e);
+                            warn!("Join error: {:?}", e);
                             break;
                         }
                     }
@@ -396,7 +397,7 @@ impl russh::server::Handler for SshSession {
 
                 let maybe_token = match (username.as_deref(), get_token()) {
                     (Some("DefaultAccount"), Ok(token_handle)) => {
-                        info!("DefaultAccount context was requested...");
+                        debug!("DefaultAccount context was requested...");
                         Some(token_handle)
                     },
                     _ => {
@@ -417,7 +418,7 @@ impl russh::server::Handler for SshSession {
             match child_status {
                 Ok(status) => {
                     if status.success() {
-                        info!("Child process exited successfully.");
+                        debug!("Child process exited successfully.");
                         //reader_handle.abort();
                         let _ = handle_waiter
                             .exit_status_request(channel_id, status.exit_code())
@@ -449,7 +450,7 @@ impl russh::server::Handler for SshSession {
         pix_height: u32,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        info!("Requesting window change {channel_id} {col_width}x{row_height}, {pix_width}x{pix_height}");
+        trace!("Requesting window change {channel_id} {col_width}x{row_height}, {pix_width}x{pix_height}");
 
         let clone = self.ptys.clone();
         let ptys_guard = clone.lock().await;
@@ -476,9 +477,9 @@ impl russh::server::Handler for SshSession {
         _modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        info!("Requesting PTY!");
+        trace!("Requesting PTY!");
 
-        info!(
+        debug!(
             "PTY request received: term={}, col_width={}, row_height={}",
             term, col_width, row_height
         );
@@ -602,7 +603,7 @@ impl russh::server::Handler for SshSession {
                     match res {
                         Ok((exit_status, output)) => {
                             session.data(channel_id, CryptoVec::from(output))?;
-                            let msg = format!("Command exited with status: {exit_status}");
+                            let msg = format!("Command exited, {exit_status}");
                             debug!("{}", msg);
                             session.data(channel_id, CryptoVec::from(msg.as_bytes().to_vec()))?;
                         },
@@ -644,7 +645,7 @@ pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<keys::PrivateKey> 
 }
 
 pub async fn start_ssh_server(port: u16, config_dir: &PathBuf) -> std::io::Result<()> {
-    debug!("in start_ssh_server");
+    trace!("in start_ssh_server");
 
     debug!("Loading or generating hostkey(s)");
     let ed25519_host_key = load_host_key(config_dir)?;
