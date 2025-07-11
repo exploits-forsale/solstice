@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+clap = { version = "4.5.41", features = ["derive"] }
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 portable-pty = { git = "https://github.com/tuxuser/wezterm", branch = "spawn_command_as_user" }
 rand_core = { version = "0.6.4", features = ["std"] }
