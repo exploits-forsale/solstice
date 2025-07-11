@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::os::windows::fs::MetadataExt;
-use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -25,17 +24,21 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use crate::directory::get_drivelist;
+use crate::directory::canonizalize_unix_path_name;
+use crate::directory::unix_like_path_to_windows_path;
+
 struct FileEx {
     filename: String,
     attrs: FileAttributes,
 }
 
-impl Into<File> for FileEx {
-    fn into(self) -> File {
+impl From<FileEx> for File {
+    fn from(val: FileEx) -> Self {
         let mut f = File {
-            filename: self.filename,
+            filename: val.filename,
             longname: String::new(),
-            attrs: self.attrs
+            attrs: val.attrs
         };
         f.longname = f.longname();
         f
@@ -77,59 +80,6 @@ impl InternalHandle {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct SftpSession {
-    version: Option<u32>,
-    handles: HashMap<String, InternalHandle>,
-}
-
-fn canonizalize_unix_path_name(path: &PathBuf) -> PathBuf {
-    let mut parts = vec![];
-    for part in path {
-        match part.to_str() {
-            Some(".") => continue,
-            Some("\\") => continue,
-            Some("..") => _ = parts.pop(),
-            Some(val) => parts.push(val),
-            None => {}
-        }
-    }
-
-    let res = String::from("/") + parts.join("/").as_str();
-    PathBuf::from(&res)
-}
-
-
-fn unix_like_path_to_windows_path(unix_path: &str) -> Option<PathBuf> {
-    let parsed_path = Path::new(&unix_path);
-    debug!("unix to windows path: {unix_path}");
-    // Only accept full paths
-    if !parsed_path.has_root() {
-        debug!("returning None");
-        return None;
-    } else if unix_path == "/" {
-        debug!("unix->windows: returning root path: /");
-        return Some(PathBuf::from("/"));
-    }
-
-    // Grab the drive letter. We assume the first dir is the drive
-    let mut split = unix_path.split('/').skip(1);
-    if let Some(mount) = split.next() {
-        // They're statting something under a drive letter
-        let mut translated_path = PathBuf::from(format!("{}:\\", mount));
-        for component in split {
-            translated_path.push(component);
-        }
-
-        translated_path = std::path::absolute(&translated_path).unwrap_or(translated_path);
-        debug!("returning translated path: {:?}", translated_path);
-
-        Some(translated_path)
-    } else {
-        Some(PathBuf::from("/"))
-    }
-}
-
 async fn set_file_attributes(file: &mut tokio::fs::File, target_attrs: &FileAttributes) -> Result<(), std::io::Error> {
     let metadata = file
         .metadata()
@@ -151,6 +101,12 @@ async fn set_dir_attributes(_path: &PathBuf,  _target_attrs: &FileAttributes) ->
     // TODO: Implement me
     // .. or does this even make sense for dirs?
     Ok(())
+}
+
+#[derive(Default)]
+pub(crate) struct SftpSession {
+    version: Option<u32>,
+    handles: HashMap<String, InternalHandle>,
 }
 
 impl SftpSession {
@@ -238,22 +194,18 @@ impl russh_sftp::server::Handler for SftpSession {
         *dir_read_done = true;
 
         if handle == "/" {
-            let mut drives = Vec::with_capacity(26);
-            let assigned_letters =
-                unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
+            let drives = get_drivelist()
+                .map_err(|_|StatusCode::NoSuchFile)?;
 
-            for i in 0..27 {
-                if assigned_letters & (1 << i) != 0 {
-                    let mount = ('A' as u8 + i) as char;
-                    let mut attrs = FileAttributes::default();
-                    attrs.set_dir(true);
+            let mut fileattrs_dir = FileAttributes::default();
+            fileattrs_dir.set_dir(true);
 
-                    drives.push(FileEx {
-                        filename: String::from(mount),
-                        attrs,
-                    }.into());
-                }
-            }
+            let drives = drives.iter()
+                .map(|l|FileEx {
+                    filename: l.to_owned(),
+                    attrs: fileattrs_dir.clone()
+                }.into())
+                .collect();
 
             info!("returning: {:?}", drives);
             return Ok(Name { id, files: drives });
@@ -322,7 +274,7 @@ impl russh_sftp::server::Handler for SftpSession {
             id,
             files: vec![FileEx {
                 filename: normalized.to_string_lossy().to_string(),
-                attrs: attrs,
+                attrs,
             }.into()],
         })
     }
@@ -761,7 +713,7 @@ impl russh_sftp::server::Handler for SftpSession {
                         id,
                         files: vec![FileEx {
                             filename: filename.to_string(),
-                            attrs: attrs
+                            attrs
                         }.into()]
                     })
                 },
@@ -818,57 +770,5 @@ impl russh_sftp::server::Handler for SftpSession {
     ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
         debug!("extended: {id} {request} {data:?}");
         Err(self.unimplemented())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_canonicalize_path_name() {
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from(".")), PathBuf::from("/"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/")), PathBuf::from("/"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/..")), PathBuf::from("/"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/../..")), PathBuf::from("/"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C")), PathBuf::from("/C"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/")), PathBuf::from("/C"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/../..")), PathBuf::from("/"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users")), PathBuf::from("/C/users"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/")), PathBuf::from("/C/users"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/appdata/local/")), PathBuf::from("/C/users/appdata/local"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/appdata/local/../")), PathBuf::from("/C/users/appdata"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/..")), PathBuf::from("/C"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/users/../.")), PathBuf::from("/C"));
-            assert_eq!(canonizalize_unix_path_name(&PathBuf::from("/C/../C/users/.././.")), PathBuf::from("/C"));
-        }
-    }
-
-    #[test]
-    fn test_unix_style_to_windows_path() {
-        assert_eq!(unix_like_path_to_windows_path(""), None);
-        assert_eq!(unix_like_path_to_windows_path("C/"), None);
-        assert_eq!(unix_like_path_to_windows_path("C/Windows"), None);
-        assert_eq!(unix_like_path_to_windows_path("/").unwrap(), PathBuf::from("/"));
-        assert_eq!(unix_like_path_to_windows_path("/C").unwrap(), PathBuf::from("C:\\"));
-        assert_eq!(unix_like_path_to_windows_path("/C/").unwrap(), PathBuf::from("C:\\"));
-        assert_eq!(unix_like_path_to_windows_path("/C/./.").unwrap(), PathBuf::from("C:\\"));
-        assert_eq!(unix_like_path_to_windows_path("/C/././").unwrap(), PathBuf::from("C:\\"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows").unwrap(), PathBuf::from("C:\\Windows"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/").unwrap(), PathBuf::from("C:\\Windows"));
-        assert_eq!(unix_like_path_to_windows_path("/C/./././Windows/").unwrap(), PathBuf::from("C:\\Windows"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32").unwrap(), PathBuf::from("C:\\Windows\\System32"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/").unwrap(), PathBuf::from("C:\\Windows\\System32"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/././System32/").unwrap(), PathBuf::from("C:\\Windows\\System32"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/..").unwrap(), PathBuf::from("C:\\Windows"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/../").unwrap(), PathBuf::from("C:\\Windows"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/././System32/../").unwrap(), PathBuf::from("C:\\Windows"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/../..").unwrap(), PathBuf::from("C:\\"));
-        assert_eq!(unix_like_path_to_windows_path("/C/Windows/System32/../../").unwrap(), PathBuf::from("C:\\"));
-        assert_eq!(unix_like_path_to_windows_path("/C/./././Windows/System32/../../").unwrap(), PathBuf::from("C:\\"));
     }
 }

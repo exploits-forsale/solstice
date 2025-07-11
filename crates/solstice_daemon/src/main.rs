@@ -1,4 +1,4 @@
-use anyhow::Context;
+#![feature(anonymous_pipe)]
 
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::LocalTime;
@@ -18,6 +18,7 @@ use std::path;
 use tracing::debug;
 use tracing::error;
 
+mod directory;
 mod firewall;
 mod sftp;
 mod ssh;
@@ -75,9 +76,8 @@ async fn main() {
 
         if let Err(e) =
             crate::firewall::allow_port_through_firewall("Solstice Daemon - SSH", SSH_LISTEN_PORT)
-                .context("SSH")
         {
-            error!("failed to allow port through firewall: {:?}", e);
+            error!("failed to allow port through firewall for SSH: {:?}", e);
         }
     }
 
@@ -91,7 +91,8 @@ async fn main() {
     }
     debug!("using config dir: {config_dir:?}");
 
-    if let Err(e) = crate::ssh::start_ssh_server(SSH_LISTEN_PORT, config_dir).await {
-        error!("{}", e);
+    if let Err(e) = crate::ssh::start_ssh_server(SSH_LISTEN_PORT, config_dir).await
+    {
+        error!("failed to start ssh server {:?}", e);
     }
 }
