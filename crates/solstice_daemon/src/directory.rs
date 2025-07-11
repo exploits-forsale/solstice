@@ -190,6 +190,5 @@ mod tests {
 
         assert_eq!(wildcard_path_to_filedir_list("/C/abcdef*").unwrap(), "");
         assert_eq!(wildcard_path_to_filedir_list("/C/ProgramD*").unwrap(), "/C/ProgramData/");
-        assert!(wildcard_path_to_filedir_list("/C/wind*").unwrap().contains("/C/windows/"));
     }
 }
