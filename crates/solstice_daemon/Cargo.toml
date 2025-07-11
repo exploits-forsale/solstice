@@ -5,13 +5,11 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
-async-trait = "0.1.81"
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
 portable-pty = { git = "https://github.com/tuxuser/wezterm", branch = "spawn_command_as_user" }
 rand_core = { version = "0.6.4", features = ["std"] }
-russh = "0.44"
-russh-keys = "0.44.0"
-russh-sftp = "2.0.3"
+russh = "0.53"
+russh-sftp = "2.1.1"
 tokio = { version = "1.38", features = ["full"] }
 tracing = "0.1.40"
 tracing-appender = "0.2"
