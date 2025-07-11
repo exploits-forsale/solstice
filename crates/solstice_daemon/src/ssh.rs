@@ -5,10 +5,11 @@ use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::ExitStatus;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 
 use pbkdf2::password_hash::PasswordHash;
@@ -33,12 +34,14 @@ use russh::CryptoVec;
 use russh::Pty;
 use russh_keys::key::KeyPair;
 use russh_keys::key::PublicKey;
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
-use tracing::warn;
+use tracing::trace;
 
+use crate::directory::wildcard_path_to_filedir_list;
 use crate::impersonate::get_token;
 use crate::sftp::SftpSession;
 
@@ -139,7 +142,7 @@ fn verify_password(
     password: &str,
     expected_hash: &str,
 ) -> Result<(), pbkdf2::password_hash::Error> {
-    let parsed_hash = PasswordHash::new(&expected_hash)?;
+    let parsed_hash = PasswordHash::new(expected_hash)?;
     Pbkdf2.verify_password(password.as_bytes(), &parsed_hash)
 }
 
@@ -163,6 +166,25 @@ fn read_passwd(config_dir: &PathBuf) -> Result<String, anyhow::Error> {
     debug!("Reading passwd");
     std::fs::read_to_string(&passwd_path)
         .map_err(|e| anyhow::anyhow!("Failed reading passwd from file, err: {e:?}"))
+}
+
+async fn spawn_command_and_get_output(cmd: &str, raw_args: &str) -> Result<(ExitStatus, Vec<u8>), anyhow::Error> {
+    let (mut reader, writer) = std::pipe::pipe().unwrap();
+    let child_stdout = writer.try_clone()?;
+    let child_stderr = writer;
+
+    // some command that outputs to its stdout and stderr
+    let mut command = Command::new(cmd)
+        .raw_arg(raw_args)
+        .stdout(child_stdout)
+        .stderr(child_stderr)
+        .spawn()?;
+
+    let exit_status = command.wait().await?;
+    let mut buf = vec![];
+    reader.read_to_end(&mut buf)?;
+
+    Ok((exit_status, buf))
 }
 
 struct SshSession {
@@ -203,7 +225,7 @@ impl SshSession {
         let hash = hash_password(password)
             .map_err(|e| anyhow::anyhow!("Failed to hash password, err: {e:?}"))?;
 
-        std::fs::write(passwd_path(&self.config_dir), &hash.into_bytes())?;
+        std::fs::write(passwd_path(&self.config_dir), hash.into_bytes())?;
         Ok(())
     }
 }
@@ -213,10 +235,10 @@ impl russh::server::Handler for SshSession {
     type Error = anyhow::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-        info!("credentials: {}, {}", user, password);
+        trace!("credentials: {}, {}", user, password);
         let expected_hash = read_passwd(&self.config_dir)?;
 
-        if let Ok(_) = verify_password(password, &expected_hash) {
+        if verify_password(password, &expected_hash).is_ok() {
             let _ = self.username.lock().await.insert(user.to_owned());
             Ok(Auth::Accept)
         } else {
@@ -232,7 +254,7 @@ impl russh::server::Handler for SshSession {
         user: &str,
         public_key: &russh_keys::key::PublicKey,
     ) -> Result<Auth, Self::Error> {
-        info!("credentials: {}, {:?}", user, public_key);
+        trace!("credentials: {}, {:?}", user, public_key);
         let keys = read_authorized_keys(&self.config_dir)?;
 
         if keys.is_empty() {
@@ -368,21 +390,13 @@ impl russh::server::Handler for SshSession {
             let child_status = tokio::task::spawn_blocking(move || {
                 let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
 
-                let maybe_token = match username.as_deref() {
-                    Some("DefaultAccount") => {
+                let maybe_token = match (username.as_deref(), get_token()) {
+                    (Some("DefaultAccount"), Ok(token_handle)) => {
                         info!("DefaultAccount context was requested...");
-                        match get_token() {
-                            Ok(handle) => {
-                                info!("Acquired DefaultAccount token :)");
-                                Some(handle)
-                            },
-                            Err(err) => {
-                                warn!("Failed to get DefaultAccount token, will continue w/o impersonation, err: {err}");
-                                None
-                            },
-                        }
+                        Some(token_handle)
                     },
                     _ => {
+                        // Default context
                         None
                     },
                 };
@@ -518,52 +532,85 @@ impl russh::server::Handler for SshSession {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        // TODO: Make this "a bit" nicer..
-        if data.starts_with(b"passwd") {
-            let expected_pw_hash = read_passwd(&self.config_dir)?;
+        debug!("exec_request: '{}'", std::str::from_utf8(data)?);
 
-            if let Ok(passwd_line) = String::from_utf8(data.to_vec()) {
-                let mut parts = passwd_line.split(" ");
-                if parts.next() != Some("passwd") {
-                    session.data(channel_id, CryptoVec::from_slice(b"Invalid command\n"));
-                    session.channel_success(channel_id);
-                    session.close(channel_id);
-                    return Err(anyhow::anyhow!("Invalid command supplied"));
-                }
-                let old_pw = parts.next();
-                let new_pw = parts.next();
+        if let Ok(command_line) = String::from_utf8(data.to_vec()) {
+            let mut parts = command_line.split(" ");
 
-                match (old_pw, new_pw) {
-                    (Some(old_pw), Some(new_pw)) => {
-                        if let Ok(_) = verify_password(old_pw, &expected_pw_hash) {
-                            // All checks passed, setting new password
-                            self.set_new_password(new_pw)?;
-                            session.data(
-                                channel_id,
-                                CryptoVec::from_slice(b"New password set successfully!\n"),
-                            );
-                        } else {
-                            session.data(channel_id, CryptoVec::from_slice(b"Invalid password\n"));
+            match parts.next() {
+                Some("passwd") => {
+                    let expected_pw_hash = read_passwd(&self.config_dir)?;
+                    let old_pw = parts.next();
+                    let new_pw = parts.next();
+
+                    match (old_pw, new_pw) {
+                        (Some(old_pw), Some(new_pw)) => {
+                            if verify_password(old_pw, &expected_pw_hash).is_ok() {
+                                // All checks passed, setting new password
+                                self.set_new_password(new_pw)?;
+                                session.data(
+                                    channel_id,
+                                    CryptoVec::from_slice(b"New password set successfully!\n"),
+                                );
+                            } else {
+                                session.data(channel_id, CryptoVec::from_slice(b"Invalid password\n"));
+                            }
+                        }
+                        (_, _) => {
+                            session.data(channel_id, CryptoVec::from_slice(b"Invalid argument count\n"));
                         }
                     }
-                    (_, _) => {
-                        session.data(channel_id, CryptoVec::from_slice(b"Invalid argument count\n"));
+                },
+                Some("command") => {
+                    // Shell command is requested
+                    if let Some("ls") = parts.next() {
+                        // f.e for unix scp path completion: `command ls -aF1dL pwd*` (for empty remote path) or `command ls -aF1dL /D/somepath*`
+                        //
+                        // Request:
+                        // command ls -aF1dL b*
+                        //
+                        // Response:
+                        // bin/
+                        // folder/
+                        // script.ps1*
+                        let mut peekable = parts.clone().peekable();
+
+                        if let Some(&next) = peekable.peek() {
+                            if next.starts_with("-") {
+                                // skip over command line switches
+                                parts.next();
+                            }
+                        }
+
+                        let path = parts.collect::<Vec<&str>>().join(" ");
+                        let res = wildcard_path_to_filedir_list(&path)
+                            .map_err(|e|anyhow!("Failed to convert wildcard path to filedir list {e:?}"))?;
+
+                        session.data(channel_id, CryptoVec::from_slice(res.as_bytes()));
+
                     }
-                }
-            } else {
-                session.data(
-                    channel_id,
-                    CryptoVec::from_slice(b"Failed to handle passwd input\n"),
-                );
+                },
+                Some(_) => {
+                    let args = format!("/c {}", std::str::from_utf8(data)?);
+
+                    let res = spawn_command_and_get_output("cmd", &args).await;
+
+                    match res {
+                        Ok((exit_status, output)) => {
+                            session.data(channel_id, CryptoVec::from(output));
+                            let msg = format!("Command exited with status: {exit_status}");
+                            debug!("{}", msg);
+                            session.data(channel_id, CryptoVec::from(msg.as_bytes().to_vec()));
+                        },
+                        Err(err) => {
+                            session.data(channel_id, CryptoVec::from(err.to_string().as_bytes().to_vec()));
+                        },
+                    }
+                },
+                None => {
+                    session.data(channel_id, CryptoVec::from_slice(b"Invalid command\n"));
+                },
             }
-        } else {
-            // TODO: Support spawning arbitrary / interactive commands
-            session.data(
-                channel_id,
-                CryptoVec::from_slice(
-                    b"Currently only the command 'passwd <old pw> <new pw>' is supported\n",
-                ),
-            );
         }
 
         session.channel_success(channel_id);
