@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use anyhow::Context;
 use tokio::io::AsyncReadExt;
 
-use async_trait::async_trait;
 use russh_sftp::protocol::Attrs;
 use russh_sftp::protocol::File;
 use russh_sftp::protocol::FileAttributes;
@@ -120,7 +119,6 @@ impl SftpSession {
     }
 }
 
-#[async_trait]
 impl russh_sftp::server::Handler for SftpSession {
     type Error = StatusCode;
 

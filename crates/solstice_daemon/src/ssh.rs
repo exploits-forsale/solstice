@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
@@ -10,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use async_trait::async_trait;
 
 use pbkdf2::password_hash::PasswordHash;
 use pbkdf2::password_hash::PasswordHasher;
@@ -21,7 +19,6 @@ use portable_pty::native_pty_system;
 use portable_pty::CommandBuilder;
 use portable_pty::MasterPty;
 use portable_pty::PtySize;
-use portable_pty::PtySystem;
 use portable_pty::SlavePty;
 use rand_core::OsRng;
 use russh::server::Auth;
@@ -32,8 +29,10 @@ use russh::Channel;
 use russh::ChannelId;
 use russh::CryptoVec;
 use russh::Pty;
-use russh_keys::key::KeyPair;
-use russh_keys::key::PublicKey;
+use russh::MethodSet;
+use russh::MethodKind;
+use russh::keys;
+//use russh::keys::ssh_key;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::debug;
@@ -80,7 +79,7 @@ fn passwd_path(config_dir: &PathBuf) -> PathBuf {
 
 fn deserialize_authorized_keys(
     keydata: &str,
-) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
+) -> Result<Vec<keys::PublicKey>, std::io::Error> {
     let mut keys = Vec::new();
 
     for line in keydata.lines() {
@@ -96,7 +95,7 @@ fn deserialize_authorized_keys(
         split.next();
 
         if let Some(pubkey) = split.next() {
-            if let Ok(parsed_key) = russh_keys::parse_public_key_base64(pubkey) {
+            if let Ok(parsed_key) = keys::parse_public_key_base64(pubkey) {
                 keys.push(parsed_key);
             } else {
                 info!("Ignoring authorized_key line: {line}");
@@ -109,7 +108,7 @@ fn deserialize_authorized_keys(
 
 fn read_authorized_keys(
     config_dir: &PathBuf,
-) -> Result<Vec<russh_keys::key::PublicKey>, std::io::Error> {
+) -> Result<Vec<keys::PublicKey>, std::io::Error> {
     let authorized_keys_path = authorized_keys_path(config_dir);
 
     if !authorized_keys_path.exists() {
@@ -212,12 +211,13 @@ impl SshSession {
         clients.remove(&channel_id).unwrap()
     }
 
-    fn add_authorized_key(&mut self, key: &PublicKey) -> anyhow::Result<()> {
+    fn add_authorized_key(&mut self, key: &keys::PublicKey) -> anyhow::Result<()> {
         let mut keys_file = OpenOptions::new()
             .append(true)
             .open(authorized_keys_path(&self.config_dir))?;
-        russh_keys::write_public_key_base64(&mut keys_file, key)?;
 
+        let encoded_key = "\n".to_string() + &key.to_openssh()?;
+        keys_file.write(encoded_key.as_bytes())?;
         Ok(())
     }
 
@@ -230,7 +230,6 @@ impl SshSession {
     }
 }
 
-#[async_trait]
 impl russh::server::Handler for SshSession {
     type Error = anyhow::Error;
 
@@ -243,8 +242,12 @@ impl russh::server::Handler for SshSession {
             Ok(Auth::Accept)
         } else {
             debug!("Rejected user: {user} with password-auth");
+            let mut methodset = MethodSet::empty();
+            methodset.push(MethodKind::PublicKey);
+
             Ok(Auth::Reject {
-                proceed_with_methods: Some(russh::MethodSet::PUBLICKEY),
+                proceed_with_methods: Some(methodset),
+                partial_success: false,
             })
         }
     }
@@ -252,7 +255,7 @@ impl russh::server::Handler for SshSession {
     async fn auth_publickey(
         &mut self,
         user: &str,
-        public_key: &russh_keys::key::PublicKey,
+        public_key: &keys::PublicKey,
     ) -> Result<Auth, Self::Error> {
         trace!("credentials: {}, {:?}", user, public_key);
         let keys = read_authorized_keys(&self.config_dir)?;
@@ -282,6 +285,7 @@ impl russh::server::Handler for SshSession {
 
         Ok(Auth::Reject {
             proceed_with_methods: (None),
+            partial_success: false,
         })
     }
 
@@ -302,7 +306,7 @@ impl russh::server::Handler for SshSession {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.close(channel);
+        session.close(channel)?;
         Ok(())
     }
 
@@ -311,7 +315,7 @@ impl russh::server::Handler for SshSession {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.close(channel);
+        session.close(channel)?;
         Ok(())
     }
 
@@ -326,10 +330,10 @@ impl russh::server::Handler for SshSession {
         if name == "sftp" {
             let channel = self.get_channel(channel_id).await;
             let sftp = SftpSession::default();
-            session.channel_success(channel_id);
+            session.channel_success(channel_id)?;
             russh_sftp::server::run(channel.into_stream(), sftp).await;
         } else {
-            session.channel_failure(channel_id);
+            session.channel_failure(channel_id)?;
         }
 
         Ok(())
@@ -351,7 +355,7 @@ impl russh::server::Handler for SshSession {
         tokio::spawn(async move {
             let pty_cloned = ptys.clone();
             let shell = "cmd.exe";
-            let reader_handle = tokio::spawn(async move {
+            let _reader_handle = tokio::spawn(async move {
                 loop {
                     let mut buffer = vec![0; 1024];
                     let pty_cloned = ptys.clone();
@@ -362,7 +366,7 @@ impl russh::server::Handler for SshSession {
                     })
                     .await
                     {
-                        Ok(Ok((n, buffer))) if n == 0 => {
+                        Ok(Ok((0, _buffer))) => {
                             debug!("PTY: No more data to read.");
                             break;
                         }
@@ -443,13 +447,13 @@ impl russh::server::Handler for SshSession {
         row_height: u32,
         pix_width: u32,
         pix_height: u32,
-        session: &mut Session,
+        _session: &mut Session,
     ) -> Result<(), Self::Error> {
         info!("Requesting window change {channel_id} {col_width}x{row_height}, {pix_width}x{pix_height}");
 
         let clone = self.ptys.clone();
         let ptys_guard = clone.lock().await;
-        let pty = ptys_guard.get(&channel_id).unwrap();
+        let _pty = ptys_guard.get(&channel_id).unwrap();
 
         let _ = ptys_guard.get(&channel_id).unwrap().master.lock().await.resize(PtySize {
             rows: row_height as u16,
@@ -469,7 +473,7 @@ impl russh::server::Handler for SshSession {
         row_height: u32,
         pix_width: u32,
         pix_height: u32,
-        modes: &[(Pty, u32)],
+        _modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         info!("Requesting PTY!");
@@ -514,7 +518,7 @@ impl russh::server::Handler for SshSession {
         &mut self,
         channel_id: ChannelId,
         data: &[u8],
-        session: &mut Session,
+        _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(pty_stream) = self.ptys.lock().await.get_mut(&channel_id) {
             let mut pty_writer = pty_stream.writer.lock().await;
@@ -551,13 +555,13 @@ impl russh::server::Handler for SshSession {
                                 session.data(
                                     channel_id,
                                     CryptoVec::from_slice(b"New password set successfully!\n"),
-                                );
+                                )?;
                             } else {
-                                session.data(channel_id, CryptoVec::from_slice(b"Invalid password\n"));
+                                session.data(channel_id, CryptoVec::from_slice(b"Invalid password\n"))?;
                             }
                         }
                         (_, _) => {
-                            session.data(channel_id, CryptoVec::from_slice(b"Invalid argument count\n"));
+                            session.data(channel_id, CryptoVec::from_slice(b"Invalid argument count\n"))?;
                         }
                     }
                 },
@@ -586,7 +590,7 @@ impl russh::server::Handler for SshSession {
                         let res = wildcard_path_to_filedir_list(&path)
                             .map_err(|e|anyhow!("Failed to convert wildcard path to filedir list {e:?}"))?;
 
-                        session.data(channel_id, CryptoVec::from_slice(res.as_bytes()));
+                        session.data(channel_id, CryptoVec::from_slice(res.as_bytes()))?;
 
                     }
                 },
@@ -597,41 +601,43 @@ impl russh::server::Handler for SshSession {
 
                     match res {
                         Ok((exit_status, output)) => {
-                            session.data(channel_id, CryptoVec::from(output));
+                            session.data(channel_id, CryptoVec::from(output))?;
                             let msg = format!("Command exited with status: {exit_status}");
                             debug!("{}", msg);
-                            session.data(channel_id, CryptoVec::from(msg.as_bytes().to_vec()));
+                            session.data(channel_id, CryptoVec::from(msg.as_bytes().to_vec()))?;
                         },
                         Err(err) => {
-                            session.data(channel_id, CryptoVec::from(err.to_string().as_bytes().to_vec()));
+                            session.data(channel_id, CryptoVec::from(err.to_string().as_bytes().to_vec()))?;
                         },
                     }
                 },
                 None => {
-                    session.data(channel_id, CryptoVec::from_slice(b"Invalid command\n"));
+                    session.data(channel_id, CryptoVec::from_slice(b"Invalid command\n"))?;
                 },
             }
         }
 
-        session.channel_success(channel_id);
-        session.close(channel_id);
+        session.channel_success(channel_id)?;
+        session.close(channel_id)?;
         Ok(())
     }
 }
 
-pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<KeyPair> {
+pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<keys::PrivateKey> {
     let ed25519_key_path = config_dir.join("ssh_host_ed25519_key");
-    if let Ok(secret_key) = russh_keys::load_secret_key(&ed25519_key_path, None) {
+    let mut ed25519_pubkey_path = ed25519_key_path.clone();
+    ed25519_pubkey_path.push(".pub");
+
+    if let Ok(secret_key) = keys::load_secret_key(&ed25519_key_path, None) {
         return Ok(secret_key);
     }
 
-    let generated = KeyPair::generate_ed25519().unwrap();
-    let priv_key_writer = fs::File::create(&ed25519_key_path)?;
-    russh_keys::encode_pkcs8_pem(&generated, priv_key_writer)
+    let generated = keys::PrivateKey::random(&mut OsRng, keys::Algorithm::Ed25519).unwrap();
+
+    generated.write_openssh_file(&ed25519_key_path, keys::ssh_key::LineEnding::LF)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
 
-    let pub_key_writer = fs::File::create(ed25519_key_path.to_str().unwrap().to_string() + ".pub")?;
-    russh_keys::write_public_key_base64(pub_key_writer, &generated.clone_public_key().unwrap())
+    generated.public_key().write_openssh_file(&ed25519_pubkey_path)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
 
     Ok(generated)
@@ -683,6 +689,6 @@ mod tests {
         "#;
         // Only supporting ED25519, ECDSA-SHA2-NISTP256 and RSA
         // DSS is not parsed successfully in this case
-        assert_eq!(6, deserialize_authorized_keys(keydata).unwrap().len());
+        assert_eq!(8, deserialize_authorized_keys(keydata).unwrap().len());
     }
 }
