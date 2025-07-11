@@ -139,14 +139,14 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
         self.version = Some(version);
-        info!("version: {:?}, extensions: {:?}", self.version, extensions);
+        debug!("version: {:?}, extensions: {:?}", self.version, extensions);
         Ok(Version::new())
     }
 
     /// Called on SSH_FXP_CLOSE.
     /// The status can be returned as Ok or as Err
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
-        info!("close: {} {}", id, handle);
+        debug!("close: {} {}", id, handle);
         let _ = self.handles.remove(&handle);
 
         Ok(self.success(id))
@@ -154,7 +154,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
     /// Called on SSH_FXP_OPENDIR
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
-        info!("opendir: {}", &path);
+        debug!("opendir: {}", &path);
         let pathbuf = PathBuf::from(&path);
         match unix_like_path_to_windows_path(&path) {
             Some(winpath) => {
@@ -176,7 +176,7 @@ impl russh_sftp::server::Handler for SftpSession {
     /// Called on SSH_FXP_READDIR.
     /// EOF error should be returned at the end of reading the directory
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
-        info!("readdir handle: {}", handle);
+        debug!("readdir handle: {}", handle);
 
         let dir_read_done = self.handles
             .get_mut(&handle)
@@ -205,7 +205,7 @@ impl russh_sftp::server::Handler for SftpSession {
                 }.into())
                 .collect();
 
-            info!("returning: {:?}", drives);
+            debug!("returning: {:?}", drives);
             return Ok(Name { id, files: drives });
         }
 
@@ -257,7 +257,7 @@ impl russh_sftp::server::Handler for SftpSession {
     /// Called on SSH_FXP_REALPATH.
     /// Must contain only one name and a dummy attributes
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        info!("realpath: {}", path);
+        debug!("realpath: {}", path);
         let normalized = canonizalize_unix_path_name(&PathBuf::from(&path));
         let mut attrs = FileAttributes::default();
 
