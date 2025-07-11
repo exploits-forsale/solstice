@@ -27,6 +27,10 @@ jobs:
         with:
           toolchain: nightly
 
+      - name: Install native build deps
+        if: ${{ matrix.component == 'solstice_daemon' }}
+        uses: ilammy/setup-nasm@v1
+
       - name: Test ${{ matrix.component }}
         if: ${{ matrix.test }}
         working-directory: crates/${{ matrix.component }}
