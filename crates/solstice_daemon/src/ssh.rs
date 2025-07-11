@@ -625,19 +625,19 @@ impl russh::server::Handler for SshSession {
 
 pub fn load_host_key(config_dir: &PathBuf) -> std::io::Result<keys::PrivateKey> {
     let ed25519_key_path = config_dir.join("ssh_host_ed25519_key");
-    let mut ed25519_pubkey_path = ed25519_key_path.clone();
-    ed25519_pubkey_path.push(".pub");
+    let ed25519_pubkey_path = config_dir.join("ssh_host_ed25519_key.pub");
 
     if let Ok(secret_key) = keys::load_secret_key(&ed25519_key_path, None) {
         return Ok(secret_key);
     }
 
     let generated = keys::PrivateKey::random(&mut OsRng, keys::Algorithm::Ed25519).unwrap();
-
     generated.write_openssh_file(&ed25519_key_path, keys::ssh_key::LineEnding::LF)
+        .context("Failed to write OpenSSH private hostkey ")
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
 
     generated.public_key().write_openssh_file(&ed25519_pubkey_path)
+        .context("Failed to write OpenSSH public hostkey")
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
 
     Ok(generated)
