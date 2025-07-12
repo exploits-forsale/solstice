@@ -35,6 +35,8 @@ use russh::keys;
 //use russh::keys::ssh_key;
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -67,6 +69,10 @@ impl russh::server::Server for Server {
             config_dir: self.config_dir.clone(),
             ..Default::default()
         }
+    }
+
+    fn handle_session_error(&mut self, error: <Self::Handler as russh::server::Handler>::Error) {
+        error!("Session error: {error:?}");
     }
 }
 
@@ -185,6 +191,17 @@ async fn spawn_command_and_get_output(cmd: &str, raw_args: &str) -> Result<(Exit
     reader.read_to_end(&mut buf)?;
 
     Ok((exit_status, buf))
+}
+
+fn spawn_channel_msg_reader(mut channel: Channel<Msg>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            if let Some(msg) = channel.wait().await {
+                trace!("Received channel msg: {msg:?}");
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
 }
 
 struct SshSession {
@@ -353,9 +370,14 @@ impl russh::server::Handler for SshSession {
         let ptys = self.ptys.clone();
         let username = self.username.lock().await.clone();
 
+        let channel = self.get_channel(channel_id).await;
+
         tokio::spawn(async move {
             let pty_cloned = ptys.clone();
             let shell = "cmd.exe";
+
+            let _channel_reader = spawn_channel_msg_reader(channel);
+
             let _reader_handle = tokio::spawn(async move {
                 loop {
                     let mut buffer = vec![0; 1024];
@@ -597,6 +619,9 @@ impl russh::server::Handler for SshSession {
                 },
                 Some(_) => {
                     let args = format!("/c {}", std::str::from_utf8(data)?);
+
+                    let channel = self.get_channel(channel_id).await;
+                    let _channel_reader = spawn_channel_msg_reader(channel);
 
                     let res = spawn_command_and_get_output("cmd", &args).await;
 
