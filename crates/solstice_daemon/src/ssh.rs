@@ -44,7 +44,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::directory::wildcard_path_to_filedir_list;
-use crate::impersonate::get_token;
+use crate::impersonate::{get_defaultaccount_token,get_trustedinstaller_token};
 use crate::sftp::SftpSession;
 
 const DEFAULT_PASSWORD: &str = "xbox";
@@ -417,16 +417,32 @@ impl russh::server::Handler for SshSession {
             let child_status = tokio::task::spawn_blocking(move || {
                 let stream = pty_cloned.blocking_lock().get(&channel_id).unwrap().clone();
 
-                let maybe_token = match (username.as_deref(), get_token()) {
-                    (Some("DefaultAccount"), Ok(token_handle)) => {
+                let maybe_token = username.and_then(|x| match x.to_lowercase().as_ref() {
+                    "defaultaccount"|"default" => {
                         debug!("DefaultAccount context was requested...");
-                        Some(token_handle)
+                        match get_defaultaccount_token() {
+                            Ok(token_handle) => Some(token_handle.0 as *mut _),
+                            Err(e) => {
+                                warn!("Failed getting DefaultAccount token, err: {e}");
+                                None
+                            }
+                        }
+                    },
+                    "trustedinstaller"|"trusted"|"ti" => {
+                        debug!("TrustedInstaller context was requested...");
+                        match get_trustedinstaller_token() {
+                            Ok(token_handle) => Some(token_handle.0 as *mut _),
+                            Err(e) => {
+                                warn!("Failed getting TrustedInstaller token, err: {e}");
+                                None
+                            }
+                        }
                     },
                     _ => {
                         // Default context
                         None
-                    },
-                };
+                    }
+                });
 
                 let mut child = stream
                     .slave
