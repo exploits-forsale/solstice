@@ -7,8 +7,8 @@ use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INSUFFICIENT_B
 use windows::Win32::Security::Authentication::Identity::LSA_OBJECT_ATTRIBUTES;
 use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
 use windows::Win32::System::LibraryLoader::{LoadLibraryW, GetProcAddress};
-use windows::Win32::Security::Authorization::{ConvertStringSidToSidW};
-use windows::Win32::Security::{AdjustTokenPrivileges, DuplicateTokenEx, GetTokenInformation, ImpersonateLoggedOnUser, LookupPrivilegeNameW, LookupPrivilegeValueW, SecurityAnonymous, SecurityImpersonation, TokenGroups, TokenImpersonation, TokenPrimary, TokenPrivileges, GROUP_SECURITY_INFORMATION, LOGON32_LOGON, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER, LOGON32_PROVIDER_WINNT50, LUID_AND_ATTRIBUTES, PSID, QUOTA_LIMITS, SECURITY_QUALITY_OF_SERVICE, SECURITY_STATIC_TRACKING, SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SID, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_IMPERSONATE, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES, TOKEN_QUERY, TOKEN_SOURCE, TOKEN_TYPE, TOKEN_USER};
+use windows::Win32::Security::Authorization::{ConvertSidToStringSidW, ConvertStringSidToSidW};
+use windows::Win32::Security::{AdjustTokenPrivileges, DuplicateTokenEx, GetTokenInformation, ImpersonateLoggedOnUser, LookupAccountNameW, LookupPrivilegeNameW, LookupPrivilegeValueW, RevertToSelf, SecurityAnonymous, SecurityImpersonation, TokenGroups, TokenImpersonation, TokenPrimary, TokenPrivileges, GROUP_SECURITY_INFORMATION, LOGON32_LOGON, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER, LOGON32_PROVIDER_WINNT50, LUID_AND_ATTRIBUTES, PSID, QUOTA_LIMITS, SECURITY_QUALITY_OF_SERVICE, SECURITY_STATIC_TRACKING, SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SID, SID_AND_ATTRIBUTES, SID_NAME_USE, TOKEN_ACCESS_MASK, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_IMPERSONATE, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES, TOKEN_QUERY, TOKEN_SOURCE, TOKEN_TYPE, TOKEN_USER};
 use windows::Win32::System::SystemServices::{MAXIMUM_ALLOWED, SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT, SE_GROUP_INTEGRITY, SE_GROUP_INTEGRITY_ENABLED, SE_GROUP_MANDATORY, SE_GROUP_OWNER};
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION};
 use std::ptr::{null_mut, null};
@@ -270,7 +270,7 @@ pub(crate) fn get_token_by_pid(pid: u32) -> Result<HANDLE> {
 
 
 
-pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
+pub(crate) fn get_token_by_sid(psid: PSID) -> Result<HANDLE> {
     let mut impersonating = false;
     unsafe {
         let advapi32 = LoadLibraryW(w!("advapi32.dll")).context("LoadLibraryW")?;
@@ -295,11 +295,6 @@ pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
             }
         }
 
-        let mut s_TI = PSID::default();
-        let SID_TRUSTED_INSTALLER_VEC16 = to_u16(SID_TRUSTED_INSTALLER);
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_TRUSTED_INSTALLER_VEC16.as_ptr()),  &mut s_TI as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW TRUSTED_INSTALLER {e}"))?;
-
         let current_token = {
             if impersonating {
                 GetCurrentThreadToken().context("GetCurrentThreadToken")?
@@ -314,7 +309,7 @@ pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
         let tgroups_sid_and_attrs_ptr: *mut SID_AND_ATTRIBUTES = (*tgroups_ptr).Groups.as_ptr() as *mut _;
         let tgroups_count = (*tgroups_ptr).GroupCount;
 
-        (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Sid = s_TI;
+        (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Sid = psid;
         (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Attributes = (SE_GROUP_OWNER | SE_GROUP_ENABLED) as u32;
 
         let mut trusted_installer_token = HANDLE::default();
@@ -332,11 +327,29 @@ pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
             null_mut(),
         );
 
+        let logon_err = GetLastError();
+
+        if impersonating {
+		    RevertToSelf().context("Failed RevertToSelf")?;
+        }
+
         if !res {
-            return Err(anyhow!("LogonUserExExW failed"));
+            return Err(anyhow!("LogonUserExExW failed, err: {logon_err:?}"));
         }
 
         Ok(trusted_installer_token)
+    }
+}
+
+pub(crate) fn get_token_by_sid_str(sid_str: &str) -> Result<HANDLE> {
+    let mut psid = PSID::default();
+    let sid_vec16 = to_u16(sid_str);
+
+    unsafe {
+        ConvertStringSidToSidW(PCWSTR::from_raw(sid_vec16.as_ptr()),  &mut psid as *mut _)
+            .map_err(|e|anyhow!("ConvertStringSidToSidW {sid_str} {e}"))?;
+
+        get_token_by_sid(psid)
     }
 }
 
@@ -362,6 +375,64 @@ pub(crate) fn impersonate_tcb_token() -> Result<()> {
 
         Ok(())
     }
+}
+
+pub(crate) fn get_token_for_username(username: &str) -> Result<HANDLE> {
+    let mut username = username.to_owned();
+    
+    if !username.ends_with("\0") {
+        username = username + "\0";
+    }
+
+    let username_u16 = to_u16(&username);
+
+    let mut sid_name_use = SID_NAME_USE::default();
+    let mut sid_len = 0;
+    let mut domain_name_len: u32 = 0;
+
+    info!("Before lookup: sid_len: {sid_len}");
+
+    unsafe {
+        let res = LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR::from_raw(username_u16.as_ptr()),
+            PSID(null_mut()),
+            &mut sid_len,
+            PWSTR::null(),
+            &mut domain_name_len,
+            &mut sid_name_use as *mut _
+        );
+
+        if let Err(e) = res {
+            info!("Insufficient buffer: {}", e.code());
+            //if e.code() != 0x8007007A {
+                //return Err(anyhow!("LookupAccountNameW failed unexpectedly: {e}"));
+            //}
+        }
+    
+        info!("sid_len: {sid_len}, domain name len: {domain_name_len}, SID_NAME_USE: {sid_name_use:?}");
+        let mut sid = vec![0u8; sid_len as usize];
+        let mut domain_name = vec![0u16; domain_name_len as usize];
+        let psid = PSID(sid.as_mut_ptr() as *mut _);
+
+        LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR::from_raw(username_u16.as_ptr()),
+            psid,
+            &mut sid_len,
+            PWSTR::from_raw(domain_name.as_mut_ptr()),
+            &mut domain_name_len,
+            &mut sid_name_use as *mut _
+        ).map_err(|e|anyhow!("Failed LookupAccountNameW (2): {e}"))?;
+
+        info!("Lookup success! sid: {:?}, domain: {:?}", &sid[..sid_len as usize], &domain_name[..domain_name_len as usize]);
+
+        get_token_by_sid(psid)
+    }
+}
+
+pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
+    get_token_by_sid_str(SID_TRUSTED_INSTALLER)
 }
 
 /// Translated from: https://github.com/Wh04m1001/NtCreateToken/blob/main/NtCreateToken.cpp
@@ -548,7 +619,7 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
         let mut sqs = SECURITY_QUALITY_OF_SERVICE {
             Length: size_of::<SECURITY_QUALITY_OF_SERVICE>() as u32,
             ImpersonationLevel: SecurityAnonymous,
-            ContextTrackingMode: SECURITY_STATIC_TRACKING.0,
+            ContextTrackingMode: 1,
             EffectiveOnly: false.into(),
         };
         let mut oa = LSA_OBJECT_ATTRIBUTES {

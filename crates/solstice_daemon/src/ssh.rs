@@ -44,6 +44,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::directory::wildcard_path_to_filedir_list;
+use crate::impersonate::get_token_for_username;
 use crate::impersonate::{get_defaultaccount_token,get_trustedinstaller_token};
 use crate::sftp::SftpSession;
 
@@ -421,7 +422,10 @@ impl russh::server::Handler for SshSession {
                     "defaultaccount"|"default" => {
                         debug!("DefaultAccount context was requested...");
                         match get_defaultaccount_token() {
-                            Ok(token_handle) => Some(token_handle.0 as *mut _),
+                            Ok(token_handle) => {
+                                info!("Got DefaultAccount token!");
+                                Some(token_handle.0 as *mut _)
+                            },
                             Err(e) => {
                                 warn!("Failed getting DefaultAccount token, err: {e}");
                                 None
@@ -431,14 +435,32 @@ impl russh::server::Handler for SshSession {
                     "trustedinstaller"|"trusted"|"ti" => {
                         debug!("TrustedInstaller context was requested...");
                         match get_trustedinstaller_token() {
-                            Ok(token_handle) => Some(token_handle.0 as *mut _),
+                            Ok(token_handle) => {
+                                info!("Got TrustedInstaller token!");
+                                Some(token_handle.0 as *mut _)
+                            },
                             Err(e) => {
                                 warn!("Failed getting TrustedInstaller token, err: {e}");
                                 None
                             }
                         }
                     },
-                    _ => {
+                    _username => {
+                        /*
+                        if username.starts_with("usermgr") {
+                            debug!("UserMgr context was requested...");
+                            match get_token_for_username("XBOXONE\\UserMgr0") {
+                                Ok(token_handle) => {
+                                    info!("Got UserMgr token!");
+                                    return Some(token_handle.0 as *mut _)
+                                },
+                                Err(e) => {
+                                    warn!("Failed getting token for username: {username}, err: {e}");
+                                    return None;
+                                }
+                            }
+                        }
+                        */
                         // Default context
                         None
                     }
