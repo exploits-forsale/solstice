@@ -1,14 +1,16 @@
 use anyhow::{anyhow, Context, Result};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 use windows::core::{s, w, PWSTR};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, LUID, NTSTATUS};
+use windows::Wdk::System::SystemServices::{SE_DEBUG_PRIVILEGE, SE_TCB_PRIVILEGE};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, LUID, NTSTATUS};
 use windows::Win32::Security::Authentication::Identity::LSA_OBJECT_ATTRIBUTES;
+use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
 use windows::Win32::System::LibraryLoader::{LoadLibraryW, GetProcAddress};
 use windows::Win32::Security::Authorization::{ConvertStringSidToSidW};
-use windows::Win32::Security::{AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeNameW, LookupPrivilegeValueW, SecurityAnonymous, TokenPrimary, TokenPrivileges, LUID_AND_ATTRIBUTES, PSID, SECURITY_QUALITY_OF_SERVICE, SECURITY_STATIC_TRACKING, SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SID, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES, TOKEN_SOURCE, TOKEN_TYPE, TOKEN_USER};
-use windows::Win32::System::SystemServices::{SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT, SE_GROUP_INTEGRITY, SE_GROUP_INTEGRITY_ENABLED, SE_GROUP_MANDATORY, SE_GROUP_OWNER};
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::Security::{AdjustTokenPrivileges, DuplicateTokenEx, GetTokenInformation, ImpersonateLoggedOnUser, LookupPrivilegeNameW, LookupPrivilegeValueW, SecurityAnonymous, SecurityImpersonation, TokenGroups, TokenImpersonation, TokenPrimary, TokenPrivileges, GROUP_SECURITY_INFORMATION, LOGON32_LOGON, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER, LOGON32_PROVIDER_WINNT50, LUID_AND_ATTRIBUTES, PSID, QUOTA_LIMITS, SECURITY_QUALITY_OF_SERVICE, SECURITY_STATIC_TRACKING, SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SID, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_IMPERSONATE, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES, TOKEN_QUERY, TOKEN_SOURCE, TOKEN_TYPE, TOKEN_USER};
+use windows::Win32::System::SystemServices::{MAXIMUM_ALLOWED, SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT, SE_GROUP_INTEGRITY, SE_GROUP_INTEGRITY_ENABLED, SE_GROUP_MANDATORY, SE_GROUP_OWNER};
+use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION};
 use std::ptr::{null_mut, null};
 use std::mem::{size_of, zeroed};
 
@@ -20,6 +22,8 @@ const SID_AUTH: &str = "S-1-5-11";
 const SID_EVERYONE: &str = "S-1-1-0";
 const SID_SYS: &str = "S-1-16-16384";
 const SID_TRUSTED_INSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+
 
 pub fn to_u16(value: &str) -> Vec<u16> {
     value.encode_utf16()
@@ -48,7 +52,46 @@ type NtCreateTokenFn = unsafe extern "system" fn(
     TokenSource: *mut TOKEN_SOURCE,
 ) -> NTSTATUS;
 
+type RtlAdjustPrivilegeFn = unsafe extern "system" fn(
+    Privilege: i32,
+    Enable: bool,
+    ThreadPrivilege: bool,
+    Previous: *mut bool
+) -> NTSTATUS;
+
 type NtAllocateLocallyUniqueIdFn = unsafe extern "system" fn(Luid: *mut LUID) -> NTSTATUS;
+
+type LogonUserExExWFn = unsafe extern "system" fn(
+    lpszusername: PCWSTR,
+    lpszdomain: PCWSTR,
+    lpszpassword: PCWSTR,
+    dwlogontype: LOGON32_LOGON,
+    dwlogonprovider: LOGON32_PROVIDER,
+    pTokenGroups: *mut TOKEN_GROUPS,
+    phtoken: *mut HANDLE,
+    pplogonsid: *mut SID,
+    ppprofilebuffer: *mut *mut std::ffi::c_void,
+    pdwprofilelength: *mut u32,
+    pquotalimits: *mut QUOTA_LIMITS,
+) -> bool;
+
+/* Inline functions, not part of windows-rs */
+pub fn GetCurrentProcessToken() -> Result<HANDLE>
+{
+    let mut handle = HANDLE::default();
+    unsafe {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle)?;
+    }
+    Ok(handle)
+}
+
+pub fn GetCurrentThreadToken() -> Result<HANDLE> {
+    let mut handle = HANDLE::default();
+    unsafe {
+        OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut handle)?;
+    }
+    Ok(handle)
+}
 
 pub fn fetch_query_user_token() -> Result<QueryUserTokenFn> {
     unsafe {
@@ -158,13 +201,177 @@ pub(crate) fn set_token_privilege(token_handle: HANDLE, privilege_name: &str, en
     Ok(())
 }
 
-/// Translated from: https://github.com/Wh04m1001/NtCreateToken/blob/main/NtCreateToken.cpp
-pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
+pub(crate) fn enable_privilege(impersonating: bool, privilege_val: i32) -> Result<()> {
     unsafe {
-        let mut token_handle = HANDLE::default();
-        // Step 0: Adjust token privileges to allow token creation
-        OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &mut token_handle as *mut _)
-            .map_err(|e|anyhow!("Failed to open process token: {e}"))?;
+        let ntdll = LoadLibraryW(w!("ntdll.dll")).context("LoadLibraryW")?;
+        if ntdll.0.is_null() {
+            return Err(anyhow!("Failed to load ntdll.dll: {}", GetLastError().0));
+        }
+
+        let rtl_adjust_privilege= GetProcAddress(ntdll, s!("RtlAdjustPrivilege"))
+            .ok_or_else(|| anyhow!("GetProcAddress(RtlAdjustPrivilege) failed"))?;
+
+        let RtlAdjustPrivilege: RtlAdjustPrivilegeFn = std::mem::transmute(rtl_adjust_privilege);
+
+        let mut enabled = false;
+        let res = RtlAdjustPrivilege(privilege_val, true, impersonating, &mut enabled);
+        if res.is_err() {
+            return Err(anyhow!("RtlAdjustPrivilege failed for ID: {privilege_val}"));
+        }
+
+        Ok(())
+    }
+}
+
+pub(crate) fn find_process(process: &str) -> Result<u32> {
+    let mut pe32 = PROCESSENTRY32W::default();
+    pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            .map_err(|e|anyhow!("CreateSnapshot: {e}"))?;
+
+        if !snap.is_invalid() {
+            Process32FirstW(snap, &mut pe32)
+                .map_err(|e|anyhow!("Process32First: {e}"))?;
+
+            loop {
+                let exe_name = String::from_utf16(&pe32.szExeFile)?;
+                debug!("Process name: {:?}", exe_name.trim_end_matches('\0'));
+                if exe_name.trim_end_matches('\0') == process {
+                    return Ok(pe32.th32ProcessID);
+                }
+
+                // This will return when no process is available anymore
+                Process32NextW(snap, &mut pe32)
+                    .map_err(|e|anyhow!("Process32Next: {e}"))?;
+            };
+        }
+    }
+
+    Err(anyhow!("Failed finding process '{process}'"))
+}
+
+pub(crate) fn get_token_by_pid(pid: u32) -> Result<HANDLE> {
+    let mut hToken = HANDLE::default();
+    let mut hDupToken = HANDLE::default();
+
+    unsafe {
+        let hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+            .map_err(|e|anyhow!("OpenProcess: {e}"))?;
+        OpenProcessToken(hProcess, TOKEN_ACCESS_MASK(MAXIMUM_ALLOWED), &mut hToken)
+            .map_err(|e|anyhow!("OpenProcessToken: {e}"))?;
+        DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenImpersonation, &mut hDupToken)
+            .map_err(|e|anyhow!("DuplicateToken: {e}"))?;
+            
+        Ok(hDupToken)
+    }
+}
+
+
+
+pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
+    let mut impersonating = false;
+    unsafe {
+        let advapi32 = LoadLibraryW(w!("advapi32.dll")).context("LoadLibraryW")?;
+        if advapi32.0.is_null() {
+            return Err(anyhow!("Failed to load advapi32.dll: {}", GetLastError().0));
+        }
+
+        let logon_user_ex_ex_w= GetProcAddress(advapi32, s!("LogonUserExExW"))
+            .ok_or_else(|| anyhow!("GetProcAddress(LogonUserExExW) failed"))?;
+
+        let LogonUserExExW: LogonUserExExWFn = std::mem::transmute(logon_user_ex_ex_w);
+
+        if enable_privilege(false, SE_TCB_PRIVILEGE).is_err() {
+            if enable_privilege(false, SE_DEBUG_PRIVILEGE).is_err() {
+                return Err(anyhow!("Current process does not have SeTcbPrivilege or SeDebugPrivilege"));
+            }
+
+            impersonating = impersonate_tcb_token().is_ok();
+
+            if !impersonating || enable_privilege(false, SE_TCB_PRIVILEGE).is_err() {
+                return Err(anyhow!("Failed to acquire SeTcbPrivilege"));
+            }
+        }
+
+        let mut s_TI = PSID::default();
+        let SID_TRUSTED_INSTALLER_VEC16 = to_u16(SID_TRUSTED_INSTALLER);
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_TRUSTED_INSTALLER_VEC16.as_ptr()),  &mut s_TI as *mut _)
+            .map_err(|e|anyhow!("ConvertStringSidToSidW TRUSTED_INSTALLER {e}"))?;
+
+        let current_token = {
+            if impersonating {
+                GetCurrentThreadToken().context("GetCurrentThreadToken")?
+            } else {
+                GetCurrentProcessToken().context("GetCurrentProcessToken")?
+            }
+        };
+
+        let tgroups = get_token_information(current_token, TokenGroups)?;
+
+        let tgroups_ptr: *mut TOKEN_GROUPS = tgroups.as_ptr() as _;
+        let tgroups_sid_and_attrs_ptr: *mut SID_AND_ATTRIBUTES = (*tgroups_ptr).Groups.as_ptr() as *mut _;
+        let tgroups_count = (*tgroups_ptr).GroupCount;
+
+        (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Sid = s_TI;
+        (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Attributes = (SE_GROUP_OWNER | SE_GROUP_ENABLED) as u32;
+
+        let mut trusted_installer_token = HANDLE::default();
+        let res = LogonUserExExW(
+            w!("SYSTEM"),
+            w!("NT AUTHORITY"),
+            PCWSTR(null()),
+            LOGON32_LOGON_SERVICE,
+            LOGON32_PROVIDER_WINNT50,
+            tgroups_ptr,
+            &mut trusted_installer_token as *mut _,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+        );
+
+        if !res {
+            return Err(anyhow!("LogonUserExExW failed"));
+        }
+
+        Ok(trusted_installer_token)
+    }
+}
+
+pub(crate) fn impersonate_tcb_token() -> Result<()> {
+    unsafe {
+        let winlogon_pid = find_process("winlogon.exe")
+            .context("Failed finding winlogon.exe PID")?;
+
+        let h_process = OpenProcess(PROCESS_QUERY_INFORMATION, false, winlogon_pid)
+            .map_err(|e|anyhow!("Failed OpenProcess: {e}"))?;
+
+        let mut h_token = HANDLE::default();
+        OpenProcessToken(h_process, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE, &mut h_token)
+            .map_err(|e|anyhow!("Failed OpenProcessToken: {e}"))?;
+        CloseHandle(h_process)
+            .context("CloseHandle hProcess")?;
+
+        ImpersonateLoggedOnUser(h_token)
+            .context("ImpersonateLoggedOnUser")?;
+
+        CloseHandle(h_token)
+            .context("CloseHandle hToken")?;
+
+        Ok(())
+    }
+}
+
+/// Translated from: https://github.com/Wh04m1001/NtCreateToken/blob/main/NtCreateToken.cpp
+pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
+    unsafe {
+        let lsass_pid = find_process("lsass.exe")
+            .map_err(|e|anyhow!("Failed finding process: {e}"))?;
+
+        let token_handle = get_token_by_pid(lsass_pid)
+            .map_err(|e|anyhow!("get_token_by_pid: {e}"))?;
 
         info!("Before token adjustment");
         print_token_privileges(token_handle)
@@ -206,12 +413,12 @@ pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
 
         // Step 3: Create SIDs
         info!("Step 3: Create SIDs");
-        let mut s_SYSTEMSID = SID::default();
-        let mut s_LOCALADM = SID::default();
-        let mut s_AUTH = SID::default();
-        let mut s_EVERYONE = SID::default();
-        let mut s_SYS = SID::default();
-        let mut s_TI = SID::default();
+        let mut p_SYSTEMSID = PSID::default();
+        let mut p_LOCALADM = PSID::default();
+        let mut p_AUTH = PSID::default();
+        let mut p_EVERYONE = PSID::default();
+        let mut p_SYS = PSID::default();
+        let mut p_TI = PSID::default();
 
         let SID_SYSTEM_VEC16 = to_u16(SID_SYSTEM);
         let SID_LOCALADM_VEC16 = to_u16(SID_LOCALADM);
@@ -220,34 +427,18 @@ pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
         let SID_SYS_VEC16 = to_u16(SID_SYS);
         let SID_TRUSTED_INSTALLER_VEC16 = to_u16(SID_TRUSTED_INSTALLER);
 
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_SYSTEM_VEC16.as_ptr()), &mut s_SYSTEMSID as *mut _ as *mut _)
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_SYSTEM_VEC16.as_ptr()), &mut p_SYSTEMSID as *mut _)
             .map_err(|e|anyhow!("ConvertStringSidToSidW SYSTEM {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_LOCALADM_VEC16.as_ptr()), &mut s_LOCALADM as *mut _ as *mut _)
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_LOCALADM_VEC16.as_ptr()), &mut p_LOCALADM as *mut _)
             .map_err(|e|anyhow!("ConvertStringSidToSidW LOCALADM {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_AUTH_VEC16.as_ptr()), &mut s_AUTH as *mut _ as *mut _)
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_AUTH_VEC16.as_ptr()), &mut p_AUTH as *mut _)
             .map_err(|e|anyhow!("ConvertStringSidToSidW AUTH {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_EVERYONE_VEC16.as_ptr()), &mut s_EVERYONE as *mut _ as *mut _)
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_EVERYONE_VEC16.as_ptr()), &mut p_EVERYONE as *mut _)
             .map_err(|e|anyhow!("ConvertStringSidToSidW EVERYONE {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_SYS_VEC16.as_ptr()), &mut s_SYS as *mut _ as *mut _)
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_SYS_VEC16.as_ptr()), &mut p_SYS as *mut _)
             .map_err(|e|anyhow!("ConvertStringSidToSidW SYS {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_TRUSTED_INSTALLER_VEC16.as_ptr()),  &mut s_TI as *mut _ as *mut _)
+        ConvertStringSidToSidW(PCWSTR::from_raw(SID_TRUSTED_INSTALLER_VEC16.as_ptr()),  &mut p_TI as *mut _)
             .map_err(|e|anyhow!("ConvertStringSidToSidW TRUSTED_INSTALLER {e}"))?;
-
-        info!("s_SYSTEMSID: {s_SYSTEMSID:?}\n
-             s_LOCALADM: {s_LOCALADM:?}\n
-             s_AUTH: {s_AUTH:?}\n
-             s_EVERYONE: {s_EVERYONE:?}\n
-             s_SYS: {s_SYS:?}\n
-             s_TI: {s_TI:?}\n
-"
-        );
-
-        let p_SYSTEMSID = PSID(&mut s_SYSTEMSID as *mut _ as *mut _);
-        let p_LOCALADM = PSID(&mut s_LOCALADM as *mut _ as *mut _);
-        let p_AUTH = PSID(&mut s_AUTH as *mut _ as *mut _);
-        let p_EVERYONE = PSID(&mut s_EVERYONE as *mut _ as *mut _);
-        let p_SYS = PSID(&mut s_SYS as *mut _ as *mut _);
-        let p_TI = PSID(&mut s_TI as *mut _ as *mut _);
 
         // Step 4: Setup TOKEN_USER
         info!("Step 4: Setup TOKEN_USER");
