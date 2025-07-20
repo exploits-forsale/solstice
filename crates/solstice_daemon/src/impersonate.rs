@@ -1,18 +1,90 @@
-use anyhow::{anyhow, Context, Result};
-use tracing::{debug, info, trace};
-use windows::core::{s, w, PWSTR};
+use anyhow::anyhow;
+use anyhow::Context;
+use anyhow::Result;
+use std::mem::size_of;
+use std::mem::zeroed;
+use std::ptr::null;
+use std::ptr::null_mut;
+use tracing::debug;
+use tracing::info;
+use tracing::trace;
+use windows::core::s;
+use windows::core::w;
 use windows::core::PCWSTR;
-use windows::Wdk::System::SystemServices::{SE_DEBUG_PRIVILEGE, SE_TCB_PRIVILEGE};
-use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, LUID, NTSTATUS};
+use windows::core::PWSTR;
+use windows::Wdk::System::SystemServices::SE_DEBUG_PRIVILEGE;
+use windows::Wdk::System::SystemServices::SE_TCB_PRIVILEGE;
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::Foundation::GetLastError;
+use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::LUID;
+use windows::Win32::Foundation::NTSTATUS;
+use windows::Win32::Security::AdjustTokenPrivileges;
 use windows::Win32::Security::Authentication::Identity::LSA_OBJECT_ATTRIBUTES;
-use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
-use windows::Win32::System::LibraryLoader::{LoadLibraryW, GetProcAddress};
-use windows::Win32::Security::Authorization::{ConvertSidToStringSidW, ConvertStringSidToSidW};
-use windows::Win32::Security::{AdjustTokenPrivileges, DuplicateTokenEx, GetTokenInformation, ImpersonateLoggedOnUser, LookupAccountNameW, LookupPrivilegeNameW, LookupPrivilegeValueW, RevertToSelf, SecurityAnonymous, SecurityImpersonation, TokenGroups, TokenImpersonation, TokenPrimary, TokenPrivileges, GROUP_SECURITY_INFORMATION, LOGON32_LOGON, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER, LOGON32_PROVIDER_WINNT50, LUID_AND_ATTRIBUTES, PSID, QUOTA_LIMITS, SECURITY_QUALITY_OF_SERVICE, SECURITY_STATIC_TRACKING, SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SID, SID_AND_ATTRIBUTES, SID_NAME_USE, TOKEN_ACCESS_MASK, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_IMPERSONATE, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES, TOKEN_QUERY, TOKEN_SOURCE, TOKEN_TYPE, TOKEN_USER};
-use windows::Win32::System::SystemServices::{MAXIMUM_ALLOWED, SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT, SE_GROUP_INTEGRITY, SE_GROUP_INTEGRITY_ENABLED, SE_GROUP_MANDATORY, SE_GROUP_OWNER};
-use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION};
-use std::ptr::{null_mut, null};
-use std::mem::{size_of, zeroed};
+use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
+use windows::Win32::Security::DuplicateTokenEx;
+use windows::Win32::Security::GetTokenInformation;
+use windows::Win32::Security::ImpersonateLoggedOnUser;
+use windows::Win32::Security::LookupAccountNameW;
+use windows::Win32::Security::LookupPrivilegeNameW;
+use windows::Win32::Security::LookupPrivilegeValueW;
+use windows::Win32::Security::RevertToSelf;
+use windows::Win32::Security::SecurityAnonymous;
+use windows::Win32::Security::SecurityImpersonation;
+use windows::Win32::Security::TokenGroups;
+use windows::Win32::Security::TokenImpersonation;
+use windows::Win32::Security::TokenPrimary;
+use windows::Win32::Security::TokenPrivileges;
+use windows::Win32::Security::LOGON32_LOGON;
+use windows::Win32::Security::LOGON32_LOGON_SERVICE;
+use windows::Win32::Security::LOGON32_PROVIDER;
+use windows::Win32::Security::LOGON32_PROVIDER_WINNT50;
+use windows::Win32::Security::LUID_AND_ATTRIBUTES;
+use windows::Win32::Security::PSID;
+use windows::Win32::Security::QUOTA_LIMITS;
+use windows::Win32::Security::SECURITY_QUALITY_OF_SERVICE;
+use windows::Win32::Security::SE_PRIVILEGE_ENABLED;
+use windows::Win32::Security::SE_PRIVILEGE_ENABLED_BY_DEFAULT;
+use windows::Win32::Security::SID;
+use windows::Win32::Security::SID_AND_ATTRIBUTES;
+use windows::Win32::Security::SID_NAME_USE;
+use windows::Win32::Security::TOKEN_ACCESS_MASK;
+use windows::Win32::Security::TOKEN_ALL_ACCESS;
+use windows::Win32::Security::TOKEN_DEFAULT_DACL;
+use windows::Win32::Security::TOKEN_DUPLICATE;
+use windows::Win32::Security::TOKEN_GROUPS;
+use windows::Win32::Security::TOKEN_IMPERSONATE;
+use windows::Win32::Security::TOKEN_INFORMATION_CLASS;
+use windows::Win32::Security::TOKEN_OWNER;
+use windows::Win32::Security::TOKEN_PRIMARY_GROUP;
+use windows::Win32::Security::TOKEN_PRIVILEGES;
+use windows::Win32::Security::TOKEN_PRIVILEGES_ATTRIBUTES;
+use windows::Win32::Security::TOKEN_QUERY;
+use windows::Win32::Security::TOKEN_SOURCE;
+use windows::Win32::Security::TOKEN_TYPE;
+use windows::Win32::Security::TOKEN_USER;
+use windows::Win32::System::Diagnostics::ToolHelp::CreateToolhelp32Snapshot;
+use windows::Win32::System::Diagnostics::ToolHelp::Process32FirstW;
+use windows::Win32::System::Diagnostics::ToolHelp::Process32NextW;
+use windows::Win32::System::Diagnostics::ToolHelp::PROCESSENTRY32W;
+use windows::Win32::System::Diagnostics::ToolHelp::TH32CS_SNAPPROCESS;
+use windows::Win32::System::LibraryLoader::GetProcAddress;
+use windows::Win32::System::LibraryLoader::LoadLibraryW;
+use windows::Win32::System::SystemServices::MAXIMUM_ALLOWED;
+use windows::Win32::System::SystemServices::SE_GROUP_ENABLED;
+use windows::Win32::System::SystemServices::SE_GROUP_ENABLED_BY_DEFAULT;
+use windows::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
+use windows::Win32::System::SystemServices::SE_GROUP_INTEGRITY_ENABLED;
+use windows::Win32::System::SystemServices::SE_GROUP_MANDATORY;
+use windows::Win32::System::SystemServices::SE_GROUP_OWNER;
+use windows::Win32::System::Threading::GetCurrentProcess;
+use windows::Win32::System::Threading::GetCurrentThread;
+use windows::Win32::System::Threading::OpenProcess;
+use windows::Win32::System::Threading::OpenProcessToken;
+use windows::Win32::System::Threading::OpenThreadToken;
+use windows::Win32::System::Threading::PROCESS_QUERY_INFORMATION;
+use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
 
 const LUID_SYSTEM: u32 = 999;
 
@@ -21,20 +93,18 @@ const SID_LOCALADM: &str = "S-1-5-32-544";
 const SID_AUTH: &str = "S-1-5-11";
 const SID_EVERYONE: &str = "S-1-1-0";
 const SID_SYS: &str = "S-1-16-16384";
-const SID_TRUSTED_INSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
-
-
+const SID_TRUSTED_INSTALLER: &str =
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
 pub fn to_u16(value: &str) -> Vec<u16> {
-    value.encode_utf16()
+    value
+        .encode_utf16()
         .chain(std::iter::once(0u16))
         .collect::<Vec<u16>>()
 }
 
-pub type QueryUserTokenFn = unsafe extern "system" fn(
-    dwSessionId: u32,
-    handle: *mut HANDLE,
-) -> bool;
+pub type QueryUserTokenFn =
+    unsafe extern "system" fn(dwSessionId: u32, handle: *mut HANDLE) -> bool;
 
 type NtCreateTokenFn = unsafe extern "system" fn(
     TokenHandle: *mut HANDLE,
@@ -56,7 +126,7 @@ type RtlAdjustPrivilegeFn = unsafe extern "system" fn(
     Privilege: i32,
     Enable: bool,
     ThreadPrivilege: bool,
-    Previous: *mut bool
+    Previous: *mut bool,
 ) -> NTSTATUS;
 
 type NtAllocateLocallyUniqueIdFn = unsafe extern "system" fn(Luid: *mut LUID) -> NTSTATUS;
@@ -76,8 +146,7 @@ type LogonUserExExWFn = unsafe extern "system" fn(
 ) -> bool;
 
 /* Inline functions, not part of windows-rs */
-pub fn GetCurrentProcessToken() -> Result<HANDLE>
-{
+pub fn GetCurrentProcessToken() -> Result<HANDLE> {
     let mut handle = HANDLE::default();
     unsafe {
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle)?;
@@ -96,8 +165,8 @@ pub fn GetCurrentThreadToken() -> Result<HANDLE> {
 pub fn fetch_query_user_token() -> Result<QueryUserTokenFn> {
     unsafe {
         let hmod = LoadLibraryW(w!("EXT-MS-WIN-SESSION-USERTOKEN-L1-1-0.DLL"))?;
-        let func = GetProcAddress(hmod, s!("QueryUserToken"))
-            .ok_or(anyhow!("GetProcAddress failed"))?;
+        let func =
+            GetProcAddress(hmod, s!("QueryUserToken")).ok_or(anyhow!("GetProcAddress failed"))?;
         let ptr: QueryUserTokenFn = std::mem::transmute(func);
         Ok(ptr)
     }
@@ -118,21 +187,32 @@ pub(crate) fn get_defaultaccount_token() -> Result<HANDLE> {
     }
 }
 
-pub(crate) fn get_token_information(token_handle: HANDLE, info_class: TOKEN_INFORMATION_CLASS) -> Result<Vec<u8>> {
+pub(crate) fn get_token_information(
+    token_handle: HANDLE,
+    info_class: TOKEN_INFORMATION_CLASS,
+) -> Result<Vec<u8>> {
     let mut info_len = 0;
 
     unsafe {
         let ret = GetTokenInformation(token_handle, info_class, None, 0, &mut info_len).err();
 
-        if let Some(e) = ret {            
+        if let Some(e) = ret {
             if e.code().0 != ERROR_INSUFFICIENT_BUFFER.to_hresult().0 {
-                return Err(anyhow!("Unexpected error when getting required TokenInformation buffer size, err: {e}"));
+                return Err(anyhow!(
+                    "Unexpected error when getting required TokenInformation buffer size, err: {e}"
+                ));
             }
         }
 
         let mut buf: Vec<u8> = Vec::with_capacity(info_len as usize);
-        GetTokenInformation(token_handle, info_class,Some(buf.as_mut_ptr() as *mut _), info_len, &mut info_len)
-            .map_err(|e|anyhow!("GetTokenInformation (2), err: {e}"))?;
+        GetTokenInformation(
+            token_handle,
+            info_class,
+            Some(buf.as_mut_ptr() as *mut _),
+            info_len,
+            &mut info_len,
+        )
+        .map_err(|e| anyhow!("GetTokenInformation (2), err: {e}"))?;
 
         Ok(buf)
     }
@@ -140,7 +220,7 @@ pub(crate) fn get_token_information(token_handle: HANDLE, info_class: TOKEN_INFO
 
 pub(crate) fn print_token_privileges(token_handle: HANDLE) -> Result<()> {
     let mut tinfo = get_token_information(token_handle, TokenPrivileges)
-        .map_err(|e|anyhow!("get_token_information, err: {e}"))?;
+        .map_err(|e| anyhow!("get_token_information, err: {e}"))?;
 
     unsafe {
         let privs_ptr: *mut TOKEN_PRIVILEGES = tinfo.as_mut_ptr() as *mut _;
@@ -152,16 +232,21 @@ pub(crate) fn print_token_privileges(token_handle: HANDLE) -> Result<()> {
             let la = privs_attrs_ptr.add(i as usize);
             trace!("LUID: {:?}, Attr: {:?}", (*la).Luid, (*la).Attributes);
 
-            match LookupPrivilegeNameW(PCWSTR(null()), &(*la).Luid, PWSTR(str_buf.as_mut_ptr()), &mut str_len) {
+            match LookupPrivilegeNameW(
+                PCWSTR(null()),
+                &(*la).Luid,
+                PWSTR(str_buf.as_mut_ptr()),
+                &mut str_len,
+            ) {
                 Ok(_) => {
                     let priv_name = String::from_utf16(&str_buf[..str_len as usize])
-                        .map_err(|e|anyhow!("String::from_utf16, err: {e}"))?;
-    
+                        .map_err(|e| anyhow!("String::from_utf16, err: {e}"))?;
+
                     info!("name: {priv_name}");
-                },
+                }
                 Err(_) => {
                     debug!("Privilege {i} does not exist, LUID: {:?}", *la);
-                },
+                }
             }
         }
     }
@@ -169,22 +254,32 @@ pub(crate) fn print_token_privileges(token_handle: HANDLE) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn set_token_privilege(token_handle: HANDLE, privilege_name: &str, enable: bool) -> Result<()> {
+pub(crate) fn set_token_privilege(
+    token_handle: HANDLE,
+    privilege_name: &str,
+    enable: bool,
+) -> Result<()> {
     let mut luid = LUID::default();
 
     unsafe {
         let priv_name = to_u16(privilege_name);
-        LookupPrivilegeValueW(PCWSTR(null()), PCWSTR::from_raw(priv_name.as_ptr()), &mut luid)
-            .map_err(|e|anyhow!("LookupPrivilegeValueW, err: {e}"))?;
+        LookupPrivilegeValueW(
+            PCWSTR(null()),
+            PCWSTR::from_raw(priv_name.as_ptr()),
+            &mut luid,
+        )
+        .map_err(|e| anyhow!("LookupPrivilegeValueW, err: {e}"))?;
 
         let token_privs = TOKEN_PRIVILEGES {
             PrivilegeCount: 1,
-            Privileges: [
-                LUID_AND_ATTRIBUTES {
-                    Luid: luid,
-                    Attributes: if enable {SE_PRIVILEGE_ENABLED} else {TOKEN_PRIVILEGES_ATTRIBUTES(0)},
-                }
-            ],
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: if enable {
+                    SE_PRIVILEGE_ENABLED
+                } else {
+                    TOKEN_PRIVILEGES_ATTRIBUTES(0)
+                },
+            }],
         };
 
         AdjustTokenPrivileges(
@@ -193,10 +288,9 @@ pub(crate) fn set_token_privilege(token_handle: HANDLE, privilege_name: &str, en
             Some(&token_privs as *const _),
             size_of::<TOKEN_PRIVILEGES>() as u32,
             None,
-            None
+            None,
         )
-            .map_err(|e|anyhow!("AdjustTokenPrivileges, err: {e}"))?;
-
+        .map_err(|e| anyhow!("AdjustTokenPrivileges, err: {e}"))?;
     }
     Ok(())
 }
@@ -208,7 +302,7 @@ pub(crate) fn enable_privilege(impersonating: bool, privilege_val: i32) -> Resul
             return Err(anyhow!("Failed to load ntdll.dll: {}", GetLastError().0));
         }
 
-        let rtl_adjust_privilege= GetProcAddress(ntdll, s!("RtlAdjustPrivilege"))
+        let rtl_adjust_privilege = GetProcAddress(ntdll, s!("RtlAdjustPrivilege"))
             .ok_or_else(|| anyhow!("GetProcAddress(RtlAdjustPrivilege) failed"))?;
 
         let RtlAdjustPrivilege: RtlAdjustPrivilegeFn = std::mem::transmute(rtl_adjust_privilege);
@@ -229,11 +323,10 @@ pub(crate) fn find_process(process: &str) -> Result<u32> {
 
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-            .map_err(|e|anyhow!("CreateSnapshot: {e}"))?;
+            .map_err(|e| anyhow!("CreateSnapshot: {e}"))?;
 
         if !snap.is_invalid() {
-            Process32FirstW(snap, &mut pe32)
-                .map_err(|e|anyhow!("Process32First: {e}"))?;
+            Process32FirstW(snap, &mut pe32).map_err(|e| anyhow!("Process32First: {e}"))?;
 
             loop {
                 let exe_name = String::from_utf16(&pe32.szExeFile)?;
@@ -243,9 +336,8 @@ pub(crate) fn find_process(process: &str) -> Result<u32> {
                 }
 
                 // This will return when no process is available anymore
-                Process32NextW(snap, &mut pe32)
-                    .map_err(|e|anyhow!("Process32Next: {e}"))?;
-            };
+                Process32NextW(snap, &mut pe32).map_err(|e| anyhow!("Process32Next: {e}"))?;
+            }
         }
     }
 
@@ -258,17 +350,22 @@ pub(crate) fn get_token_by_pid(pid: u32) -> Result<HANDLE> {
 
     unsafe {
         let hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
-            .map_err(|e|anyhow!("OpenProcess: {e}"))?;
+            .map_err(|e| anyhow!("OpenProcess: {e}"))?;
         OpenProcessToken(hProcess, TOKEN_ACCESS_MASK(MAXIMUM_ALLOWED), &mut hToken)
-            .map_err(|e|anyhow!("OpenProcessToken: {e}"))?;
-        DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenImpersonation, &mut hDupToken)
-            .map_err(|e|anyhow!("DuplicateToken: {e}"))?;
-            
+            .map_err(|e| anyhow!("OpenProcessToken: {e}"))?;
+        DuplicateTokenEx(
+            hToken,
+            TOKEN_ALL_ACCESS,
+            None,
+            SecurityImpersonation,
+            TokenImpersonation,
+            &mut hDupToken,
+        )
+        .map_err(|e| anyhow!("DuplicateToken: {e}"))?;
+
         Ok(hDupToken)
     }
 }
-
-
 
 pub(crate) fn get_token_by_sid(psid: PSID) -> Result<HANDLE> {
     let mut impersonating = false;
@@ -278,14 +375,16 @@ pub(crate) fn get_token_by_sid(psid: PSID) -> Result<HANDLE> {
             return Err(anyhow!("Failed to load advapi32.dll: {}", GetLastError().0));
         }
 
-        let logon_user_ex_ex_w= GetProcAddress(advapi32, s!("LogonUserExExW"))
+        let logon_user_ex_ex_w = GetProcAddress(advapi32, s!("LogonUserExExW"))
             .ok_or_else(|| anyhow!("GetProcAddress(LogonUserExExW) failed"))?;
 
         let LogonUserExExW: LogonUserExExWFn = std::mem::transmute(logon_user_ex_ex_w);
 
         if enable_privilege(false, SE_TCB_PRIVILEGE).is_err() {
             if enable_privilege(false, SE_DEBUG_PRIVILEGE).is_err() {
-                return Err(anyhow!("Current process does not have SeTcbPrivilege or SeDebugPrivilege"));
+                return Err(anyhow!(
+                    "Current process does not have SeTcbPrivilege or SeDebugPrivilege"
+                ));
             }
 
             impersonating = impersonate_tcb_token().is_ok();
@@ -306,11 +405,13 @@ pub(crate) fn get_token_by_sid(psid: PSID) -> Result<HANDLE> {
         let tgroups = get_token_information(current_token, TokenGroups)?;
 
         let tgroups_ptr: *mut TOKEN_GROUPS = tgroups.as_ptr() as _;
-        let tgroups_sid_and_attrs_ptr: *mut SID_AND_ATTRIBUTES = (*tgroups_ptr).Groups.as_ptr() as *mut _;
+        let tgroups_sid_and_attrs_ptr: *mut SID_AND_ATTRIBUTES =
+            (*tgroups_ptr).Groups.as_ptr() as *mut _;
         let tgroups_count = (*tgroups_ptr).GroupCount;
 
         (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Sid = psid;
-        (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Attributes = (SE_GROUP_OWNER | SE_GROUP_ENABLED) as u32;
+        (*tgroups_sid_and_attrs_ptr.add(tgroups_count as usize - 1)).Attributes =
+            (SE_GROUP_OWNER | SE_GROUP_ENABLED) as u32;
 
         let mut trusted_installer_token = HANDLE::default();
         let res = LogonUserExExW(
@@ -330,7 +431,7 @@ pub(crate) fn get_token_by_sid(psid: PSID) -> Result<HANDLE> {
         let logon_err = GetLastError();
 
         if impersonating {
-		    RevertToSelf().context("Failed RevertToSelf")?;
+            RevertToSelf().context("Failed RevertToSelf")?;
         }
 
         if !res {
@@ -346,8 +447,8 @@ pub(crate) fn get_token_by_sid_str(sid_str: &str) -> Result<HANDLE> {
     let sid_vec16 = to_u16(sid_str);
 
     unsafe {
-        ConvertStringSidToSidW(PCWSTR::from_raw(sid_vec16.as_ptr()),  &mut psid as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW {sid_str} {e}"))?;
+        ConvertStringSidToSidW(PCWSTR::from_raw(sid_vec16.as_ptr()), &mut psid as *mut _)
+            .map_err(|e| anyhow!("ConvertStringSidToSidW {sid_str} {e}"))?;
 
         get_token_by_sid(psid)
     }
@@ -355,23 +456,24 @@ pub(crate) fn get_token_by_sid_str(sid_str: &str) -> Result<HANDLE> {
 
 pub(crate) fn impersonate_tcb_token() -> Result<()> {
     unsafe {
-        let winlogon_pid = find_process("winlogon.exe")
-            .context("Failed finding winlogon.exe PID")?;
+        let winlogon_pid =
+            find_process("winlogon.exe").context("Failed finding winlogon.exe PID")?;
 
         let h_process = OpenProcess(PROCESS_QUERY_INFORMATION, false, winlogon_pid)
-            .map_err(|e|anyhow!("Failed OpenProcess: {e}"))?;
+            .map_err(|e| anyhow!("Failed OpenProcess: {e}"))?;
 
         let mut h_token = HANDLE::default();
-        OpenProcessToken(h_process, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE, &mut h_token)
-            .map_err(|e|anyhow!("Failed OpenProcessToken: {e}"))?;
-        CloseHandle(h_process)
-            .context("CloseHandle hProcess")?;
+        OpenProcessToken(
+            h_process,
+            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE,
+            &mut h_token,
+        )
+        .map_err(|e| anyhow!("Failed OpenProcessToken: {e}"))?;
+        CloseHandle(h_process).context("CloseHandle hProcess")?;
 
-        ImpersonateLoggedOnUser(h_token)
-            .context("ImpersonateLoggedOnUser")?;
+        ImpersonateLoggedOnUser(h_token).context("ImpersonateLoggedOnUser")?;
 
-        CloseHandle(h_token)
-            .context("CloseHandle hToken")?;
+        CloseHandle(h_token).context("CloseHandle hToken")?;
 
         Ok(())
     }
@@ -379,9 +481,9 @@ pub(crate) fn impersonate_tcb_token() -> Result<()> {
 
 pub(crate) fn get_token_for_username(username: &str) -> Result<HANDLE> {
     let mut username = username.to_owned();
-    
+
     if !username.ends_with("\0") {
-        username = username + "\0";
+        username += "\0";
     }
 
     let username_u16 = to_u16(&username);
@@ -400,16 +502,16 @@ pub(crate) fn get_token_for_username(username: &str) -> Result<HANDLE> {
             &mut sid_len,
             PWSTR::null(),
             &mut domain_name_len,
-            &mut sid_name_use as *mut _
+            &mut sid_name_use as *mut _,
         );
 
         if let Err(e) = res {
             info!("Insufficient buffer: {}", e.code());
             //if e.code() != 0x8007007A {
-                //return Err(anyhow!("LookupAccountNameW failed unexpectedly: {e}"));
+            //return Err(anyhow!("LookupAccountNameW failed unexpectedly: {e}"));
             //}
         }
-    
+
         info!("sid_len: {sid_len}, domain name len: {domain_name_len}, SID_NAME_USE: {sid_name_use:?}");
         let mut sid = vec![0u8; sid_len as usize];
         let mut domain_name = vec![0u16; domain_name_len as usize];
@@ -422,10 +524,15 @@ pub(crate) fn get_token_for_username(username: &str) -> Result<HANDLE> {
             &mut sid_len,
             PWSTR::from_raw(domain_name.as_mut_ptr()),
             &mut domain_name_len,
-            &mut sid_name_use as *mut _
-        ).map_err(|e|anyhow!("Failed LookupAccountNameW (2): {e}"))?;
+            &mut sid_name_use as *mut _,
+        )
+        .map_err(|e| anyhow!("Failed LookupAccountNameW (2): {e}"))?;
 
-        info!("Lookup success! sid: {:?}, domain: {:?}", &sid[..sid_len as usize], &domain_name[..domain_name_len as usize]);
+        info!(
+            "Lookup success! sid: {:?}, domain: {:?}",
+            &sid[..sid_len as usize],
+            &domain_name[..domain_name_len as usize]
+        );
 
         get_token_by_sid(psid)
     }
@@ -438,28 +545,28 @@ pub(crate) fn get_trustedinstaller_token() -> Result<HANDLE> {
 /// Translated from: https://github.com/Wh04m1001/NtCreateToken/blob/main/NtCreateToken.cpp
 pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
     unsafe {
-        let lsass_pid = find_process("lsass.exe")
-            .map_err(|e|anyhow!("Failed finding process: {e}"))?;
+        let lsass_pid =
+            find_process("lsass.exe").map_err(|e| anyhow!("Failed finding process: {e}"))?;
 
-        let token_handle = get_token_by_pid(lsass_pid)
-            .map_err(|e|anyhow!("get_token_by_pid: {e}"))?;
+        let token_handle =
+            get_token_by_pid(lsass_pid).map_err(|e| anyhow!("get_token_by_pid: {e}"))?;
 
         info!("Before token adjustment");
         print_token_privileges(token_handle)
-            .map_err(|e|anyhow!("Failed to print token privs (1): {e}"))?;
+            .map_err(|e| anyhow!("Failed to print token privs (1): {e}"))?;
 
         set_token_privilege(token_handle, "SeCreateTokenPrivilege", true)
-            .map_err(|e|anyhow!("Failed to set CreateTokenPrivilege (1): {e}"))?;
+            .map_err(|e| anyhow!("Failed to set CreateTokenPrivilege (1): {e}"))?;
 
         set_token_privilege(token_handle, "SeImpersonatePrivilege", true)
-            .map_err(|e|anyhow!("Failed to set CreateTokenPrivilege (2): {e}"))?;
+            .map_err(|e| anyhow!("Failed to set CreateTokenPrivilege (2): {e}"))?;
 
         set_token_privilege(token_handle, "SeAssignPrimaryTokenPrivilege", true)
-            .map_err(|e|anyhow!("Failed to set CreateTokenPrivilege (3): {e}"))?;
+            .map_err(|e| anyhow!("Failed to set CreateTokenPrivilege (3): {e}"))?;
 
         info!("After token adjustment");
         print_token_privileges(token_handle)
-            .map_err(|e|anyhow!("Failed to print token privs (2): {e}"))?;
+            .map_err(|e| anyhow!("Failed to print token privs (2): {e}"))?;
 
         // Step 1: Load ntdll.dll and get NtCreateToken and NtAllocateLocallyUniqueId
         let ntdll = LoadLibraryW(w!("ntdll.dll")).context("LoadLibraryW")?;
@@ -472,7 +579,8 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
             .ok_or_else(|| anyhow!("GetProcAddress(NtAllocateLocallyUniqueId) failed"))?;
 
         let NtCreateToken: NtCreateTokenFn = std::mem::transmute(nt_create_token);
-        let NtAllocateLocallyUniqueId: NtAllocateLocallyUniqueIdFn = std::mem::transmute(nt_allocate_luid);
+        let NtAllocateLocallyUniqueId: NtAllocateLocallyUniqueIdFn =
+            std::mem::transmute(nt_allocate_luid);
 
         // Step 2: Allocate LUID
         info!("Step 1: Allocate LUID");
@@ -498,18 +606,36 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
         let SID_SYS_VEC16 = to_u16(SID_SYS);
         let SID_TRUSTED_INSTALLER_VEC16 = to_u16(SID_TRUSTED_INSTALLER);
 
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_SYSTEM_VEC16.as_ptr()), &mut p_SYSTEMSID as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW SYSTEM {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_LOCALADM_VEC16.as_ptr()), &mut p_LOCALADM as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW LOCALADM {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_AUTH_VEC16.as_ptr()), &mut p_AUTH as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW AUTH {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_EVERYONE_VEC16.as_ptr()), &mut p_EVERYONE as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW EVERYONE {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_SYS_VEC16.as_ptr()), &mut p_SYS as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW SYS {e}"))?;
-        ConvertStringSidToSidW(PCWSTR::from_raw(SID_TRUSTED_INSTALLER_VEC16.as_ptr()),  &mut p_TI as *mut _)
-            .map_err(|e|anyhow!("ConvertStringSidToSidW TRUSTED_INSTALLER {e}"))?;
+        ConvertStringSidToSidW(
+            PCWSTR::from_raw(SID_SYSTEM_VEC16.as_ptr()),
+            &mut p_SYSTEMSID as *mut _,
+        )
+        .map_err(|e| anyhow!("ConvertStringSidToSidW SYSTEM {e}"))?;
+        ConvertStringSidToSidW(
+            PCWSTR::from_raw(SID_LOCALADM_VEC16.as_ptr()),
+            &mut p_LOCALADM as *mut _,
+        )
+        .map_err(|e| anyhow!("ConvertStringSidToSidW LOCALADM {e}"))?;
+        ConvertStringSidToSidW(
+            PCWSTR::from_raw(SID_AUTH_VEC16.as_ptr()),
+            &mut p_AUTH as *mut _,
+        )
+        .map_err(|e| anyhow!("ConvertStringSidToSidW AUTH {e}"))?;
+        ConvertStringSidToSidW(
+            PCWSTR::from_raw(SID_EVERYONE_VEC16.as_ptr()),
+            &mut p_EVERYONE as *mut _,
+        )
+        .map_err(|e| anyhow!("ConvertStringSidToSidW EVERYONE {e}"))?;
+        ConvertStringSidToSidW(
+            PCWSTR::from_raw(SID_SYS_VEC16.as_ptr()),
+            &mut p_SYS as *mut _,
+        )
+        .map_err(|e| anyhow!("ConvertStringSidToSidW SYS {e}"))?;
+        ConvertStringSidToSidW(
+            PCWSTR::from_raw(SID_TRUSTED_INSTALLER_VEC16.as_ptr()),
+            &mut p_TI as *mut _,
+        )
+        .map_err(|e| anyhow!("ConvertStringSidToSidW TRUSTED_INSTALLER {e}"))?;
 
         // Step 4: Setup TOKEN_USER
         info!("Step 4: Setup TOKEN_USER");
@@ -528,14 +654,39 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
             Groups: [SID_AND_ATTRIBUTES; GROUPCOUNT],
         }
 
-        let mut token_groups_arr= TOKEN_GROUPS_CUSTOM {
+        let mut token_groups_arr = TOKEN_GROUPS_CUSTOM {
             GroupCount: GROUPCOUNT as u32,
             Groups: [
-                SID_AND_ATTRIBUTES { Sid: p_LOCALADM, Attributes: (SE_GROUP_ENABLED | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_MANDATORY | SE_GROUP_OWNER) as u32 },
-                SID_AND_ATTRIBUTES { Sid: p_AUTH, Attributes: (SE_GROUP_ENABLED | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_MANDATORY) as u32 },
-                SID_AND_ATTRIBUTES { Sid: p_EVERYONE, Attributes: (SE_GROUP_ENABLED | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_MANDATORY) as u32 },
-                SID_AND_ATTRIBUTES { Sid: p_SYS, Attributes: (SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED) as u32 },
-                SID_AND_ATTRIBUTES { Sid: p_TI, Attributes: (SE_GROUP_ENABLED | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_MANDATORY | SE_GROUP_OWNER) as u32 },
+                SID_AND_ATTRIBUTES {
+                    Sid: p_LOCALADM,
+                    Attributes: (SE_GROUP_ENABLED
+                        | SE_GROUP_ENABLED_BY_DEFAULT
+                        | SE_GROUP_MANDATORY
+                        | SE_GROUP_OWNER) as u32,
+                },
+                SID_AND_ATTRIBUTES {
+                    Sid: p_AUTH,
+                    Attributes: (SE_GROUP_ENABLED
+                        | SE_GROUP_ENABLED_BY_DEFAULT
+                        | SE_GROUP_MANDATORY) as u32,
+                },
+                SID_AND_ATTRIBUTES {
+                    Sid: p_EVERYONE,
+                    Attributes: (SE_GROUP_ENABLED
+                        | SE_GROUP_ENABLED_BY_DEFAULT
+                        | SE_GROUP_MANDATORY) as u32,
+                },
+                SID_AND_ATTRIBUTES {
+                    Sid: p_SYS,
+                    Attributes: (SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED) as u32,
+                },
+                SID_AND_ATTRIBUTES {
+                    Sid: p_TI,
+                    Attributes: (SE_GROUP_ENABLED
+                        | SE_GROUP_ENABLED_BY_DEFAULT
+                        | SE_GROUP_MANDATORY
+                        | SE_GROUP_OWNER) as u32,
+                },
             ],
         };
 
@@ -576,7 +727,7 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
             "SeIncreaseWorkingSetPrivilege",
             "SeTimeZonePrivilege",
             "SeCreateSymbolicLinkPrivilege",
-            "SeDelegateSessionUserImpersonatePrivilege"
+            "SeDelegateSessionUserImpersonatePrivilege",
         ];
 
         const PRIVCOUNT: usize = 35;
@@ -585,9 +736,9 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
             Privileges: [LUID_AND_ATTRIBUTES; PRIVCOUNT],
         }
 
-        let mut privs_arr= TOKEN_PRIVS_CUSTOM {
+        let mut privs_arr = TOKEN_PRIVS_CUSTOM {
             PrivilegeCount: PRIVCOUNT as u32,
-            Privileges: [zeroed(); PRIVCOUNT]
+            Privileges: [zeroed(); PRIVCOUNT],
         };
 
         for (i, privname) in privs.into_iter().enumerate() {
@@ -595,7 +746,10 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
             let privname_vec = to_u16(privname);
             let priv_wide = PCWSTR::from_raw(privname_vec.as_ptr());
             if let Err(e) = LookupPrivilegeValueW(PCWSTR(null()), priv_wide, &mut target_luid) {
-                return Err(anyhow!("LookupPrivilegeValueW({privname}) failed: {e}, {:?}", GetLastError()));
+                return Err(anyhow!(
+                    "LookupPrivilegeValueW({privname}) failed: {e}, {:?}",
+                    GetLastError()
+                ));
             }
             privs_arr.Privileges[i] = LUID_AND_ATTRIBUTES {
                 Luid: target_luid,
@@ -605,9 +759,13 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
 
         // Step 7: Setup TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_DEFAULT_DACL, TOKEN_SOURCE
         info!("Step 7: Setup TOKEN_OWNER, TOKEN_PRIMARY_GROUP, TOKEN_DEFAULT_DACL, TOKEN_SOURCE");
-        let source_name: [i8; 8] = ['s' as i8, 'e' as i8, 'c' as i8, 'l' as i8, 'o' as i8, 'g' as i8, 'o' as i8, 'n' as i8];
+        let source_name: [i8; 8] = [
+            's' as i8, 'e' as i8, 'c' as i8, 'l' as i8, 'o' as i8, 'g' as i8, 'o' as i8, 'n' as i8,
+        ];
         let mut token_owner = TOKEN_OWNER { Owner: p_LOCALADM };
-        let mut token_pgroup = TOKEN_PRIMARY_GROUP { PrimaryGroup: p_LOCALADM };
+        let mut token_pgroup = TOKEN_PRIMARY_GROUP {
+            PrimaryGroup: p_LOCALADM,
+        };
         let mut token_dacl: TOKEN_DEFAULT_DACL = TOKEN_DEFAULT_DACL::default(); // Not setting DACL for now
         let mut token_source = TOKEN_SOURCE {
             SourceName: source_name,
@@ -634,7 +792,10 @@ pub(crate) fn get_trustedinstaller_token2() -> Result<HANDLE> {
         // Step 9: Expiration time
         info!("Step 9: Expiration time");
         let mut exp: i64 = -1i64;
-        let mut lluid = LUID { LowPart: LUID_SYSTEM, HighPart: 0 }; // SYSTEM_LUID
+        let mut lluid = LUID {
+            LowPart: LUID_SYSTEM,
+            HighPart: 0,
+        }; // SYSTEM_LUID
 
         // Step 10: Call NtCreateToken
         info!("Step 10: Call NtCreateToken");
