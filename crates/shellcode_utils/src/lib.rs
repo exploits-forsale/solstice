@@ -45,6 +45,32 @@ pub struct ShellcodeArgs {
     pub image_args: PCSTR,
 }
 
+/// Entry point of a flattened stage. `args` may be null.
+pub type ShellcodeEntryFn = unsafe extern "C" fn(args: *const ShellcodeArgs) -> u64;
+
+/// Defines the `main` entry symbol of a stage. It aligns the stack to 16 bytes,
+/// reserves the shadow space, and calls `$entry` with the incoming arguments.
+/// The GameScript exploit enters stage1 from a ROP chain that does not keep the
+/// stack aligned, and code compiled by rustc assumes the ABI alignment.
+#[macro_export]
+macro_rules! entry_point {
+    ($entry:path) => {
+        ::core::arch::global_asm!(
+            ".globl main",
+            "main:",
+            "push rbp",
+            "mov rbp, rsp",
+            "and rsp, -16",
+            "sub rsp, 32",
+            "call {entry}",
+            "mov rsp, rbp",
+            "pop rbp",
+            "ret",
+            entry = sym $entry,
+        );
+    };
+}
+
 #[macro_export]
 macro_rules! debug_break {
     () => {
@@ -54,8 +80,8 @@ macro_rules! debug_break {
     };
 }
 
-/// Allocates a new block of memory and re-encodes the input string as utf16. Appends
-/// a null terminator to the end as well.
+/// Allocates a new block of memory and re-encodes the input string as utf16.
+/// The result is null terminated only if `input` is.
 pub unsafe fn utf8_to_utf16<A: Allocator>(input: &str, alloc: A) -> Vec<u16, A> {
     // TODO: not very efficient
     let new_len = input.encode_utf16().count();

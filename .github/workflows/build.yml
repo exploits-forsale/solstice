@@ -19,6 +19,8 @@ jobs:
           - component: solstice_daemon
             features: firewall
             test: true
+          - component: shellcode_gen
+            test: true
 
     steps:
       - name: Checkout

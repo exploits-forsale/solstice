@@ -7,13 +7,11 @@
 
 extern crate alloc;
 
-use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
 use alloc::vec::Vec;
 use allocators::WinGlobalAlloc;
-use allocators::WinVirtualAlloc;
 use shellcode_utils::prelude::*;
 use solstice_loader::DependentModules;
 use solstice_loader::LoaderContext;
@@ -24,6 +22,8 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
+entry_point!(stage2_main);
+
 const STAGE3_ENV_PAYLOAD_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\run.exe"#, "\0");
 const STAGE3_ENV_ARGS_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\args.txt"#, "\0");
 
@@ -31,10 +31,7 @@ const STAGE2_ERROR_FILE_OPEN_FAILED: u64 = 0x20000001;
 const STAGE2_ERROR_FILE_READ_FAILED: u64 = 0x20000002;
 const STAGE2_ERROR_INVALID_UTF8: u64 = 0x20000003;
 
-#[no_mangle]
-pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
-    unsafe { asm!("and rsp, ~0xf") };
-
+extern "C" fn stage2_main(args: *const ShellcodeArgs) -> u64 {
     let kernelbase_ptr = get_kernelbase().unwrap();
     let kernel32_ptr = get_kernel32_legacy(kernelbase_ptr).or_else(|| get_kernel32(kernelbase_ptr));
 
@@ -118,7 +115,9 @@ pub extern "C" fn main(args: *const ShellcodeArgs) -> u64 {
     };
 
     debug_print!("Getting image ptr");
+    // Borrow the generated name. `image_name_ptr` must stay valid until the loader runs.
     let (image_name_ptr, image_name_len) = dynamic_image_name
+        .as_ref()
         .map(|image_name| (image_name.as_ptr(), image_name.len()))
         .unwrap_or_else(|| unsafe {
             debug_print!("Calculating str len");

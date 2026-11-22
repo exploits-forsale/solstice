@@ -100,8 +100,6 @@ fn is_platforms_same(data: &[u8]) {
 }
 
 unsafe fn reflective_loader_impl(context: LoaderContext) {
-    unsafe { core::arch::asm!("and rsp, ~0xf") };
-
     is_platforms_same(context.buffer);
 
     // Get the size of the headers and the image

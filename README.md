@@ -164,7 +164,7 @@ On port `8081` it can listen for text-based content and print out to the termina
 
 ### `shellcode_gen`
 
-Reads the resulting exe files from `shellcode_stage*/`, applies some patches to make the first few bytes jump to the entrypoint, and generates a flattened .bin file containing only the `.text` section.
+Reads the resulting exe files from `shellcode_stage*/` and generates a flattened .bin file containing only the `.text` section. If the entry point is not at the start of `.text`, a jump to it is placed in front of the code.
 
 ### `solstice_daemon`
 
@@ -176,7 +176,7 @@ Changes firewall settings on the Xbox to allow traffic on port 22 and runs an SS
 
 ![shellcode.exe in pe-bear](./images/show_in_pe_bear.png)
 
-`shellcode_gen/`'s main job is to read the `.text` section and do some patches to make it position-independent. This idea
+`shellcode_gen/`'s main job is to extract the `.text` section and make it callable at offset 0. This idea
 was from [hasherezade](https://twitter.com/hasherezade)'s project [masm_shc](https://github.com/hasherezade/masm_shc). It has also been modified to output a new GameScript exploit file with the latest `shellcode_stage1/` automatically embedded in it, placed in `outputs/`.
 
 This repo is a heavily modified version of [`b1tg/rust-windows-shellcode`](https://github.com/b1tg/rust-windows-shellcode). Thank you to b1tg for their work.

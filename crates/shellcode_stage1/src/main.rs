@@ -5,7 +5,6 @@
 #![no_std]
 #![no_main]
 
-use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 
@@ -17,7 +16,7 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-type Stage2Fn = fn(*const ShellcodeArgs) -> u64;
+entry_point!(stage1_main);
 
 const STAGE2_ENV_FILENAME: &str = concat!(r#"%LOCALAPPDATA%\..\LocalState\stage2.bin"#, "\0");
 const STAGE1_ERROR_FILE_OPEN_FAILED: u64 = 0x10000001;
@@ -29,10 +28,7 @@ const STAGE1_ERROR_FILE_READ_FAILED: u64 = 0x10000002;
 // and they only define it for UEFI environments
 pub static _fltused: i32 = 0;
 
-#[no_mangle]
-pub extern "C" fn main() -> u64 {
-    unsafe { asm!("and rsp, ~0xf") };
-
+extern "C" fn stage1_main() -> u64 {
     let kernelbase_ptr = get_kernelbase();
     if kernelbase_ptr.is_none() {
         return 0x404;
@@ -114,8 +110,8 @@ pub extern "C" fn main() -> u64 {
 
     debug_print!("Executing stage2");
 
-    let stage2: Stage2Fn = unsafe { core::mem::transmute(stage2_data.as_ptr()) };
-    stage2(core::ptr::null())
+    let stage2: ShellcodeEntryFn = unsafe { core::mem::transmute(stage2_data.as_ptr()) };
+    unsafe { stage2(core::ptr::null()) }
 }
 
 // #[allow(unused_attributes)]

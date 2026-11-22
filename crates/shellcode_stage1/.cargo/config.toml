@@ -20,7 +20,6 @@ rustflags = [
     #"-C", "link-arg=/INTEGRITYCHECK"
     "-C", "link-arg=/DEBUG:NONE",
     "-C", "link-arg=/EMITPOGOPHASEINFO",
-    "-C", "target-feature=-mmx,-sse,+soft-float",
     "-C", "panic=abort",
     # LLVM rewrites null terminator scans into strlen and wcslen calls, which nothing provides.
     "-C", "llvm-args=-disable-loop-idiom-strlen",

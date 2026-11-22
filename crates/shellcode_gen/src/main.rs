@@ -1,3 +1,8 @@
+use std::path::Path;
+use std::process::Command;
+
+use anyhow::bail;
+use anyhow::Context;
 use anyhow::Result;
 use goblin::pe::PE;
 use iced_x86::Decoder;
@@ -6,30 +11,35 @@ use iced_x86::Formatter;
 use iced_x86::Instruction;
 use iced_x86::NasmFormatter;
 use itertools::Itertools;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::BufWriter;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let output_path = Path::new(args[1].as_str());
 
-    let stage1_path =
-        "../shellcode_stage1/target/x86_64-pc-windows-msvc/release/shellcode_stage1.exe";
+    generate(Path::new(args[1].as_str()))
+}
 
-    let stage1_output = rewrite_shellcode(stage1_path)?;
+/// Flattens every stage and writes the stages and GameScript exploits to `output_path`.
+fn generate(output_path: &Path) -> Result<()> {
+    if !output_path.exists() {
+        std::fs::create_dir(output_path)?;
+    }
 
-    let stage1_network_path =
-        "../shellcode_stage1_network/target/x86_64-pc-windows-msvc/release/shellcode_stage1_network.exe";
+    let stage1_output = output_path.join("stage1.bin");
+    rewrite_shellcode(
+        "../shellcode_stage1/target/x86_64-pc-windows-msvc/release/shellcode_stage1.exe",
+        &stage1_output,
+    )?;
 
-    let stage1_network_output = rewrite_shellcode(stage1_network_path)?;
+    let stage1_network_output = output_path.join("stage1_network.bin");
+    rewrite_shellcode(
+        "../shellcode_stage1_network/target/x86_64-pc-windows-msvc/release/shellcode_stage1_network.exe",
+        &stage1_network_output,
+    )?;
 
-    let stage2_path =
-        "../shellcode_stage2/target/x86_64-pc-windows-msvc/release/shellcode_stage2.exe";
-    let stage2_output = rewrite_shellcode(stage2_path)?;
+    rewrite_shellcode(
+        "../shellcode_stage2/target/x86_64-pc-windows-msvc/release/shellcode_stage2.exe",
+        &output_path.join("stage2.bin"),
+    )?;
 
     // generate the exploit code to load the stage1 code
     let gamescript_exploit = generate_gamescript_exploit(&stage1_output, true)?;
@@ -37,89 +47,88 @@ fn main() -> Result<()> {
     // generate the exploit code to load the stage1 network code
     let gamescript_network_exploit = generate_gamescript_exploit(&stage1_network_output, false)?;
 
-    if !output_path.exists() {
-        std::fs::create_dir(output_path)?;
-    }
-
     let gs_path = output_path.join("gamescript_autosave.txt");
     std::fs::write(gs_path, gamescript_exploit.as_bytes())?;
 
     let gs_network_path = output_path.join("gamescript_autosave_network.txt");
     std::fs::write(gs_network_path, gamescript_network_exploit.as_bytes())?;
 
-    std::fs::copy(stage1_output, output_path.join("stage1.bin"))?;
-    std::fs::copy(
-        stage1_network_output,
-        output_path.join("stage1_network.bin"),
-    )?;
-    std::fs::copy(stage2_output, output_path.join("stage2.bin"))?;
-
     println!("done! artifacts can be found in outputs/");
 
     Ok(())
 }
 
-// Patch the prologue of the shellcode to rewrite the load offsets
-pub fn rewrite_shellcode(src_path: &str) -> Result<PathBuf> {
-    println!("[*] Patching shellcode for file {src_path}");
+/// Writes the `.text` section of the PE at `src_path` to `dst_path`. Callers
+/// enter at offset 0, so a jump to the entry point precedes the code when the
+/// entry point is elsewhere.
+pub fn rewrite_shellcode(src_path: &str, dst_path: &Path) -> Result<()> {
+    println!("[*] Flattening shellcode for file {src_path}");
 
-    let mut file = File::open(src_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let buffer = std::fs::read(src_path)?;
+    let pe = PE::parse(&buffer)?;
+    let optional_header = pe
+        .header
+        .optional_header
+        .context("PE has no optional header")?;
+    let text = pe
+        .sections
+        .iter()
+        .find(|section| section.name().ok() == Some(".text"))
+        .context("PE has no .text section")?;
 
-    // Parse the PE and adjust load address
-    let pe = PE::parse(&mut buffer)?;
-    let standard_fields = pe.header.optional_header.unwrap().standard_fields;
-    let entry_offset = standard_fields.address_of_entry_point - standard_fields.base_of_code;
+    let entry_offset = optional_header
+        .standard_fields
+        .address_of_entry_point
+        .checked_sub(u64::from(text.virtual_address))
+        .context("entry point precedes .text")?;
 
-    // Take the input filename and make the output file the same name,
-    // but with .bin extension
-    let mut dst_path = PathBuf::from(src_path);
-    dst_path.set_extension("bin");
+    let start = text.pointer_to_raw_data as usize;
+    // The virtual size excludes the padding to the file alignment.
+    let size = text.virtual_size as usize;
+    let code = buffer
+        .get(start..start + size)
+        .context(".text extends past the end of the file")?;
 
-    // Flatten the sections together
-    for section in pe.sections {
-        let name = String::from_utf8(section.name.to_vec())?;
-        if !name.starts_with(".text") {
-            continue;
-        }
-        let start = section.pointer_to_raw_data as usize;
-        // we use virtual size instead of raw size to remove any padding data
-        let size = section.virtual_size as usize;
-
-        let shellcode = File::create(&dst_path)?;
-        let mut buf_writer = BufWriter::new(shellcode);
-        println!("[*] section text addr: 0x{:x}, size: 0x{:x}", start, size);
-        println!("[*] entry offset: 0x{:x}", entry_offset);
-        println!("== before patch ==");
-        show_disassemble(&buffer[start..start + size], 5);
-        if entry_offset >= 0x100 {
-            buffer[0 + start] = 0xe9;
-            let hi = (entry_offset - 2) / 0x100;
-            let li = (entry_offset - 2) % 0x100;
-            dbg!(hi, li);
-            buffer[1 + start] = li as _;
-            buffer[2 + start] = hi as _;
-            buffer[3 + start] = 0 as _;
-            buffer[4 + start] = 0 as _;
-        } else if entry_offset >= 0x80 {
-            buffer[0 + start] = 0xe9;
-            buffer[1 + start] = (entry_offset - 5) as _;
-            buffer[2 + start] = 0 as _;
-            buffer[3 + start] = 0 as _;
-            buffer[4 + start] = 0 as _;
-        } else {
-            buffer[0 + start] = 0xeb;
-            buffer[1 + start] = (entry_offset - 2) as _;
-        }
-        println!("== after patch ==");
-        show_disassemble(&buffer[start..start + size], 5);
-
-        buf_writer.write_all(&buffer[start..start + size])?;
-        buf_writer.flush().unwrap();
+    // Only `.text` is emitted, so the entry point must be inside it.
+    if entry_offset >= size as u64 {
+        bail!("entry offset {entry_offset:#x} is outside .text (size {size:#x})");
     }
 
-    Ok(dst_path)
+    println!("[*] section text addr: {start:#x}, size: {size:#x}");
+    println!("[*] entry offset: {entry_offset:#x}");
+
+    let mut shellcode = entry_jump(entry_offset)?;
+    shellcode.extend_from_slice(code);
+    show_disassemble(&shellcode, 5);
+
+    std::fs::write(dst_path, &shellcode)?;
+
+    Ok(())
+}
+
+/// Returns the stub placed before `.text`. The code is position independent, so
+/// moving it behind the stub needs no fixups. Patching the stub over the start of
+/// `.text` instead would corrupt whichever function the linker placed there.
+fn entry_jump(entry_offset: u64) -> Result<Vec<u8>> {
+    const JMP_REL32: u8 = 0xE9;
+    const JMP_REL32_LEN: usize = 5;
+    const INT3: u8 = 0xCC;
+    // Keeps the 16-byte alignment of the code and data in `.text`.
+    const STUB_LEN: usize = 16;
+
+    if entry_offset == 0 {
+        return Ok(Vec::new());
+    }
+
+    // The displacement is relative to the end of the jump instruction.
+    let displacement = entry_offset + (STUB_LEN - JMP_REL32_LEN) as u64;
+    let displacement = i32::try_from(displacement).context("entry offset does not fit in rel32")?;
+
+    let mut stub = vec![JMP_REL32];
+    stub.extend_from_slice(&displacement.to_le_bytes());
+    stub.resize(STUB_LEN, INT3);
+
+    Ok(stub)
 }
 
 pub fn show_disassemble(bytes: &[u8], max_line: u32) {
@@ -214,4 +223,36 @@ fn generate_gamescript_exploit(shellcode_path: &Path, is_local_shellcode: bool) 
         .replace("<HOST_IP>", host_ip)
         .replace("<GIT_VERSION>", &commit)
         .replace("<GIT_DATE>", &commit_date))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns the offset into `.text` that the stub branches to.
+    fn stub_target(entry_offset: u64) -> u64 {
+        let stub = entry_jump(entry_offset).unwrap();
+        assert_eq!(stub.len() % 16, 0, "stub shifts the alignment of .text");
+
+        let mut decoder = Decoder::new(64, &stub, DecoderOptions::NONE);
+        let instruction = decoder.decode();
+
+        instruction.near_branch_target() - stub.len() as u64
+    }
+
+    #[test]
+    fn entry_at_start_of_text_needs_no_stub() {
+        assert!(entry_jump(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stub_branches_to_entry_offset() {
+        for entry_offset in [0x2, 0x7F, 0x80, 0xFF, 0x100, 0x513, 0x1_0000, 0x12_3456] {
+            assert_eq!(
+                stub_target(entry_offset),
+                entry_offset,
+                "entry offset {entry_offset:#X}"
+            );
+        }
+    }
 }
