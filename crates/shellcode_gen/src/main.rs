@@ -85,6 +85,16 @@ pub fn rewrite_shellcode(src_path: &str, dst_path: &Path) -> Result<()> {
         .find(|section| section.name().ok() == Some(".text"))
         .context("PE has no .text section")?;
 
+    // Nothing applies base relocations to the flattened code, so any absolute
+    // address in it would point into the PE's preferred image base.
+    let relocations = optional_header
+        .data_directories
+        .get_base_relocation_table()
+        .map_or(0, |directory| directory.size);
+    if relocations != 0 {
+        bail!("{src_path} has {relocations:#x} bytes of base relocations; flattened code must be position independent");
+    }
+
     let entry_offset = optional_header
         .standard_fields
         .address_of_entry_point
