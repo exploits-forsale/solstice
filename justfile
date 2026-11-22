@@ -56,6 +56,12 @@ build-daemon features=default_features: outputs-dir
 run-server run=default_run features=default_features:
     cargo run --release --features={{features}} -- --stage2 "{{outputs}}/stage2.bin" --run "{{join(invocation_directory(), run)}}"
 
+# Runs the stages under shellcode_runner. Other hosts need Wine, which cargo-xwin uses as the
+# test runner. Wine cannot run the loaded image, so those tests only run on Windows.
+[working-directory: 'crates/shellcode_runner']
+test: build-exploit build-test-program-rust
+    {{win_cargo}} test --release --target {{win_target}} {{ if os_family() == "windows" { "" } else { "-- --skip runs_image" } }}
+
 # Copies the exploit to the PC version of GameScript, replacing its autosave.
 [windows]
 generate features=default_features: (build-exploit features) (build-test-program-rust features)

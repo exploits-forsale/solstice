@@ -9,5 +9,6 @@
         "${workspaceFolder}/crates/test_program_rust/Cargo.toml",
         "${workspaceFolder}/crates/payload_server/Cargo.toml",
         "${workspaceFolder}/crates/solstice_daemon/Cargo.toml",
+        "${workspaceFolder}/crates/shellcode_runner/Cargo.toml",
     ]
 }

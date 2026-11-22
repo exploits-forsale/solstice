@@ -21,7 +21,7 @@ just build-exploit
 
 All necessary outputs will be in the `outputs/` directory.
 
-The shellcode stages link with `rust-lld`, so they need nothing else. The other Windows binaries (`test_program_rust`, `solstice_daemon`) need the MSVC CRT and Windows SDK:
+The shellcode stages link with `rust-lld`, so they need nothing else. The other Windows binaries (`test_program_rust`, `solstice_daemon`, `shellcode_runner`) need the MSVC CRT and Windows SDK:
 
 - On Windows, install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/).
 - On Linux, install [cargo-xwin](https://github.com/rust-cross/cargo-xwin). It downloads the CRT and SDK the first time it runs. `solstice_daemon` also needs clang, lld and the LLVM tools for its C dependencies.
@@ -33,6 +33,16 @@ just generate
 ```
 
 Currently the stage2 shellcode attempts to open and run `run.exe` out of GameScript's `LocalState` directory. An `args.txt` file can be placed in the same directory contaning the command line string to pass to `run.exe`.
+
+### Running the tests
+
+```
+just test
+```
+
+This builds every stage and runs them under `shellcode_runner` with `test_program_rust.exe` as `run.exe`. Each test gets its own temporary `LocalState` directory.
+
+On Linux the tests run under [Wine](https://www.winehq.org), which cargo-xwin uses as the test runner. Wine cannot start the loaded image, so the tests that run stage3 only run on Windows. CI runs all of them.
 
 ### Alternate build modes
 
@@ -165,6 +175,10 @@ On port `8081` it can listen for text-based content and print out to the termina
 ### `shellcode_gen`
 
 Reads the resulting exe files from `shellcode_stage*/` and generates a flattened .bin file containing only the `.text` section. If the entry point is not at the start of `.text`, a jump to it is placed in front of the code.
+
+### `shellcode_runner`
+
+A Windows test harness that maps a flattened stage into executable memory and calls it like the previous stage would. `just test` uses it to run the stages.
 
 ### `solstice_daemon`
 

@@ -47,6 +47,20 @@ jobs:
             crates/${{ matrix.component }}/target/release/${{ matrix.component }}.exe
             crates/${{ matrix.component }}/target/x86_64-pc-windows-msvc/release/${{ matrix.component }}.exe
 
+  test:
+    name: Test stages
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned toolchain
+        run: rustup toolchain install
+      - uses: extractions/setup-just@v2
+      - name: Test
+        run: just test
+
   generate:
     name: Generate payloads
     runs-on: windows-latest
