@@ -39,7 +39,7 @@ build-exploit features=default_features: (build-stage1 features) (build-stage1-n
 
 # Builds a stage2 that loads `image` from itself instead of disk. Writes outputs/stage2_embedded.bin.
 [working-directory: 'crates/shellcode_gen']
-build-stage2-embedded image features=default_features: outputs-dir (compile-stage2-embedded join(invocation_directory(), image) features)
+build-stage2-embedded image features=default_features: outputs-dir (compile-stage2-embedded join(invocation_directory_native(), image) features)
     cargo run --release -- flatten ../shellcode_stage2/target/embedded/{{win_target}}/release/shellcode_stage2.exe "{{outputs}}/stage2_embedded.bin"
 
 # include_bytes! resolves relative paths against the source file, so the image path is absolute.
@@ -65,7 +65,7 @@ build-daemon features=default_features: outputs-dir
 
 [working-directory: 'crates/payload_server']
 run-server run=default_run features=default_features:
-    cargo run --release --features={{features}} -- --stage2 "{{outputs}}/stage2.bin" --run "{{join(invocation_directory(), run)}}"
+    cargo run --release --features={{features}} -- --stage2 "{{outputs}}/stage2.bin" --run "{{join(invocation_directory_native(), run)}}"
 
 # Runs the stages under shellcode_runner. Other hosts need Wine, which cargo-xwin uses as the
 # test runner. Wine cannot run the loaded image, so those tests only run on Windows.
