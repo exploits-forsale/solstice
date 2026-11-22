@@ -9,9 +9,6 @@ edition = "2021"
 [dependencies]
 shellcode_utils = { path = "../shellcode_utils" }
 
-[dependencies.compiler_builtins]
-version = "=0.1.126"
-features = ["mem"]
 
 [dependencies.windows-sys]
 version = "0.59.0"

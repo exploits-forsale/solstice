@@ -1,5 +1,3 @@
-#![feature(anonymous_pipe)]
-
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::LocalTime;
 use tracing_subscriber::fmt::{self};

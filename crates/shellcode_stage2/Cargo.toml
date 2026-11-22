@@ -21,8 +21,6 @@ lto = true
 [dependencies.shellcode_utils]
 path = "../shellcode_utils"
 
-[dependencies.compiler_builtins]
-version = "=0.1.126"
 
 [dependencies.solstice_loader]
 path = "../solstice_loader"

@@ -175,7 +175,7 @@ fn read_passwd(config_dir: &PathBuf) -> Result<String, anyhow::Error> {
 }
 
 async fn spawn_command_and_get_output(cmd: &str, raw_args: &str) -> Result<(ExitStatus, Vec<u8>), anyhow::Error> {
-    let (mut reader, writer) = std::pipe::pipe().unwrap();
+    let (mut reader, writer) = std::io::pipe().unwrap();
     let child_stdout = writer.try_clone()?;
     let child_stderr = writer;
 

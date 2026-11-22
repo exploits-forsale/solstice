@@ -1,57 +1,72 @@
-set shell := ["cmd.exe", "/c"]
+# PowerShell aliases `cp`, so recipes that copy files work under both shells.
+set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
-default-features := ""
-default-run := "outputs/test_program_rust.exe"
+# Std Windows binaries need the MSVC CRT and SDK. cargo-xwin downloads them on other hosts.
+win_cargo := if os_family() == "windows" { "cargo" } else { "cargo xwin" }
+win_target := "x86_64-pc-windows-msvc"
+host_exe := if os_family() == "windows" { ".exe" } else { "" }
 
-build-daemon-internal features=default-features:
-    cd ./crates/solstice_daemon && cargo build --release --features={{features}} 
+outputs := justfile_directory() / "outputs"
+gamescript_state := env("LOCALAPPDATA", "") / "Packages/27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522/LocalState"
 
-build-server-internal features=default-features:
-    cd ./crates/payload_server && cargo build --release --features={{features}} 
+default_features := ""
+default_run := outputs / "test_program_rust.exe"
 
-run-server-internal pwd="" run=default-run features=default-features:
-    cd ./crates/payload_server && cargo run --release --features={{features}} -- --stage2 ../../outputs/stage2.bin --run {{pwd}}/{{run}}
+[unix]
+outputs-dir:
+    mkdir -p "{{outputs}}"
 
-run-server run=default-run features=default-features:
-    just --justfile {{justfile()}} run-server-internal %PWD% {{run}} {{features}}
+[windows]
+outputs-dir:
+    New-Item -ItemType Directory -Force "{{outputs}}" | Out-Null
 
-build-stage1 features=default-features:
-    cd ./crates/shellcode_stage1 && cargo build --release --features={{features}}
+[working-directory: 'crates/shellcode_stage1']
+build-stage1 features=default_features:
+    cargo build --release --features={{features}}
 
-build-stage1-network features=default-features:
-    cd ./crates/shellcode_stage1_network && cargo build --release --features={{features}}
+[working-directory: 'crates/shellcode_stage1_network']
+build-stage1-network features=default_features:
+    cargo build --release --features={{features}}
 
-build-stage2 features=default-features:
-    cd ./crates/shellcode_stage2 && cargo build --release --features={{features}}
+[working-directory: 'crates/shellcode_stage2']
+build-stage2 features=default_features:
+    cargo build --release --features={{features}}
 
-build-test-program-rust features=default-features:
-    cd ./crates/test_program_rust && cargo build --release --features={{features}}
-    cp ./crates/test_program_rust/target/release/test_program_rust.exe ./outputs/
+# Builds every stage and writes the flattened stages and GameScript exploits to outputs/.
+[working-directory: 'crates/shellcode_gen']
+build-exploit features=default_features: (build-stage1 features) (build-stage1-network features) (build-stage2 features)
+    cargo run --release -- "{{outputs}}"
 
-build-exploit features=default-features:
-    just --justfile {{justfile()}} build-stage1 {{features}}
-    just --justfile {{justfile()}} build-stage1-network {{features}}
-    just --justfile {{justfile()}} build-stage2 {{features}}
-    cd ./crates/shellcode_gen && cargo run --release -- ../../outputs/
+[working-directory: 'crates/test_program_rust']
+build-test-program-rust features=default_features: outputs-dir
+    {{win_cargo}} build --release --target {{win_target}} --features={{features}}
+    cp target/{{win_target}}/release/test_program_rust.exe "{{outputs}}/"
 
-generate features=default-features:
-    just --justfile {{justfile()}} build-exploit {{features}}
-    just --justfile {{justfile()}} build-test-program-rust {{features}}
-    xcopy /f /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
-    xcopy /f /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
-    xcopy /f /y outputs\\gamescript_autosave.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
+[working-directory: 'crates/payload_server']
+build-server features=default_features: outputs-dir
+    cargo build --release --features={{features}}
+    cp target/release/payload_server{{host_exe}} "{{outputs}}/"
 
-generate-dev features=default-features:
-    just --justfile {{justfile()}} build-exploit {{features}}
-    just --justfile {{justfile()}} build-test-program-rust network,{{features}}
-    xcopy /f /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\stage2.bin
-    xcopy /f /y crates\\test_program_rust\\target\\release\\test_program_rust.exe %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState
-    xcopy /f /y outputs\\gamescript_autosave_network.txt %LOCALAPPDATA%\\Packages\\27878ConstantineTarasenko.458004FD2C47C_c8b3w9r5va522\\LocalState\\gamescript_autosave.txt
+[working-directory: 'crates/solstice_daemon']
+build-daemon features=default_features: outputs-dir
+    {{win_cargo}} build --release --target {{win_target}} --features={{features}}
+    cp target/{{win_target}}/release/solstice_daemon.exe "{{outputs}}/srv.exe"
 
-prepare-for-deployment:
-    just --justfile {{justfile()}} build-exploit
-    just --justfile {{justfile()}} build-server-internal
-    just --justfile {{justfile()}} build-daemon-internal firewall
-    xcopy /f /y crates\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.bin .\\outputs\\stage2.bin
-    xcopy /f /y crates\\payload_server\\target\\release\\payload_server.exe .\\outputs\\payload_server.exe
-    xcopy /f /y crates\\solstice_daemon\\target\\release\\solstice_Daemon.exe .\\outputs\\srv.exe
+[working-directory: 'crates/payload_server']
+run-server run=default_run features=default_features:
+    cargo run --release --features={{features}} -- --stage2 "{{outputs}}/stage2.bin" --run "{{join(invocation_directory(), run)}}"
+
+# Copies the exploit to the PC version of GameScript, replacing its autosave.
+[windows]
+generate features=default_features: (build-exploit features) (build-test-program-rust features)
+    cp "{{outputs}}/stage2.bin" "{{gamescript_state}}/stage2.bin"
+    cp "{{outputs}}/test_program_rust.exe" "{{gamescript_state}}/test_program_rust.exe"
+    cp "{{outputs}}/gamescript_autosave.txt" "{{gamescript_state}}/gamescript_autosave.txt"
+
+[windows]
+generate-dev features=default_features: (build-exploit features) (build-test-program-rust ("network," + features))
+    cp "{{outputs}}/stage2.bin" "{{gamescript_state}}/stage2.bin"
+    cp "{{outputs}}/test_program_rust.exe" "{{gamescript_state}}/test_program_rust.exe"
+    cp "{{outputs}}/gamescript_autosave_network.txt" "{{gamescript_state}}/gamescript_autosave.txt"
+
+prepare-for-deployment: build-exploit build-server (build-daemon "firewall")

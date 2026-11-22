@@ -31,5 +31,6 @@ features = [
 ]
 
 [features]
-default = ["alloc"]
+default = ["alloc", "mem"]
 alloc = []
+mem = []

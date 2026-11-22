@@ -6,7 +6,7 @@ rustflags = [
     # Pre Link Args
     #"-Z", "pre-link-arg=/NOLOGO",
     #"-Z", "pre-link-arg=/NXCOMPAT",
-    "-Z", "pre-link-arg=/NODEFAULTLIB",
+    "-C", "link-arg=/NODEFAULTLIB",
     #"-Z", "pre-link-arg=/DYNAMICBASE",
     #"-Z", "pre-link-arg=/MANIFEST:NO",
     "--emit", "asm",
@@ -22,6 +22,13 @@ rustflags = [
     "-C", "link-arg=/EMITPOGOPHASEINFO",
     "-C", "target-feature=-mmx,-sse,+soft-float",
     "-C", "panic=abort",
+    # LLVM rewrites null terminator scans into strlen and wcslen calls, which nothing provides.
+    "-C", "llvm-args=-disable-loop-idiom-strlen",
+    "-C", "llvm-args=-disable-loop-idiom-wcslen",
     
 
 ]
+
+# The stages link no libraries, so rust-lld works on any host without an MSVC install.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"

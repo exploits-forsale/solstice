@@ -4,9 +4,6 @@
 #[cfg(not(feature = "shellcode_compat"))]
 extern crate alloc;
 
-#[cfg(feature = "shellcode_compat")]
-extern crate compiler_builtins;
-
 pub mod pelib;
 pub mod test;
 pub mod utils;

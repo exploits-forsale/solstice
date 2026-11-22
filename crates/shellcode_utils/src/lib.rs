@@ -1,7 +1,3 @@
-#![feature(new_uninit)]
-#![feature(allocator_api)]
-#![feature(extended_varargs_abi_support)]
-#![feature(strict_provenance)]
 #![allow(dead_code)]
 #![no_std]
 #![allow(non_snake_case)]
@@ -17,6 +13,8 @@ pub mod binds;
 pub mod consts;
 pub mod file;
 pub mod functions;
+#[cfg(feature = "mem")]
+pub mod mem;
 pub mod prelude;
 
 use crate::binds::*;

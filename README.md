@@ -4,23 +4,27 @@ A multi-stage PE loader for [@carrot_c4k3](https://twitter.com/carrot_c4k3)'s Co
 
 ## How to build it
 
-**This project has only been built and tested using `x86_64-pc-windows-msvc` on Windows 11. It will likely build on any 64-bit Windows, but has not been tested across different versions.**
+You need [rustup](https://rustup.rs) and [just](https://github.com/casey/just) 1.38 or newer. The builds work on Windows and Linux.
 
-1. Clone this repo and its dependencies:
+1. Clone this repo:
 
 ```shell
 git clone https://github.com/exploits-forsale/solstice.git
 cd solstice
 ```
-2. Ensure rust nightly is installed: `rust toolchain install nightly`
-3. Install `just`: https://github.com/casey/just
-4. Run:
+2. Install the pinned Rust toolchain and Windows target from `rust-toolchain.toml`: `rustup toolchain install`
+3. Run:
 
 ```
 just build-exploit
 ```
 
 All necessary outputs will be in the `outputs/` directory.
+
+The shellcode stages link with `rust-lld`, so they need nothing else. The other Windows binaries (`test_program_rust`, `solstice_daemon`) need the MSVC CRT and Windows SDK:
+
+- On Windows, install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/).
+- On Linux, install [cargo-xwin](https://github.com/rust-cross/cargo-xwin). It downloads the CRT and SDK the first time it runs. `solstice_daemon` also needs clang, lld and the LLVM tools for its C dependencies.
 
 If you would like to test on the PC version of GameScript, running the following command will execute `build-exploit` and copy the artifacts to the GameScript directory. This will overwrite its autosave state so all you have to do is click "run code":
 

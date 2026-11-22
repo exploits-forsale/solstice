@@ -5,7 +5,6 @@ use iced_x86::DecoderOptions;
 use iced_x86::Formatter;
 use iced_x86::Instruction;
 use iced_x86::NasmFormatter;
-use include_optional::include_str_optional;
 use itertools::Itertools;
 use std::fs::File;
 use std::io::prelude::*;
@@ -19,17 +18,17 @@ fn main() -> Result<()> {
     let output_path = Path::new(args[1].as_str());
 
     let stage1_path =
-        "..\\shellcode_stage1\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage1.exe";
+        "../shellcode_stage1/target/x86_64-pc-windows-msvc/release/shellcode_stage1.exe";
 
     let stage1_output = rewrite_shellcode(stage1_path)?;
 
     let stage1_network_path =
-        "..\\shellcode_stage1_network\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage1_network.exe";
+        "../shellcode_stage1_network/target/x86_64-pc-windows-msvc/release/shellcode_stage1_network.exe";
 
     let stage1_network_output = rewrite_shellcode(stage1_network_path)?;
 
     let stage2_path =
-        "..\\shellcode_stage2\\target\\x86_64-pc-windows-msvc\\release\\shellcode_stage2.exe";
+        "../shellcode_stage2/target/x86_64-pc-windows-msvc/release/shellcode_stage2.exe";
     let stage2_output = rewrite_shellcode(stage2_path)?;
 
     // generate the exploit code to load the stage1 code
@@ -204,8 +203,9 @@ fn generate_gamescript_exploit(shellcode_path: &Path, is_local_shellcode: bool) 
 
     let commit_date = commit_date.trim();
 
-    let host_ip = include_str_optional!("../../../host_ip.txt")
-        .unwrap_or("[YOUR IP HERE]");
+    // host_ip.txt is optional and lives in the repository root.
+    let host_ip = std::fs::read_to_string("../../host_ip.txt");
+    let host_ip = host_ip.as_deref().unwrap_or("[YOUR IP HERE]");
 
     Ok(exploit_data
         .replace("<SHELLCODE_FLAVOR>", shellcode_flavor)

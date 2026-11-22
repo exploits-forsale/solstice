@@ -1,6 +1,7 @@
 use core::alloc::Allocator;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
@@ -90,7 +91,7 @@ where
         let file_size = unsafe { (self.funcs.get_size)(self.file_handle, core::ptr::null_mut()) };
 
         // Allocate memory of sufficient size for the file
-        let mut file_data = Box::new_uninit_slice_in(file_size as usize, self.allocator.clone());
+        let mut file_data = Vec::with_capacity_in(file_size as usize, self.allocator.clone());
 
         // Read the file into memory
         let mut remaining_size = file_size;
@@ -114,6 +115,8 @@ where
             remaining_size -= bytes_read;
         }
 
-        unsafe { Ok(file_data.assume_init()) }
+        unsafe { file_data.set_len(file_size as usize) };
+
+        Ok(file_data.into_boxed_slice())
     }
 }
