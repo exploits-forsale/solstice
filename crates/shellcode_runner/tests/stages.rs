@@ -233,6 +233,15 @@ fn stage1_runs_image_from_local_state() {
 }
 
 #[test]
+fn stage2_embedded_runs_image_without_files() {
+    let sandbox = Sandbox::new();
+
+    let outcome = sandbox.run(&artifact_path("stage2_embedded.bin"), None);
+
+    outcome.expect_report().assert_image_then(&[]);
+}
+
+#[test]
 fn stage2_returns_open_error_for_missing_image() {
     let sandbox = Sandbox::new();
     let missing_image = sandbox.local_state().join("run.exe");

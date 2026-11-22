@@ -12,10 +12,19 @@ use iced_x86::Instruction;
 use iced_x86::NasmFormatter;
 use itertools::Itertools;
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+const USAGE: &str =
+    "usage: shellcode_gen <output dir> | shellcode_gen flatten <input.exe> <output.bin>";
 
-    generate(Path::new(args[1].as_str()))
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    match args.as_slice() {
+        [command, input, output] if command == "flatten" => {
+            rewrite_shellcode(input, Path::new(output))
+        }
+        [output_path] => generate(Path::new(output_path)),
+        _ => bail!(USAGE),
+    }
 }
 
 /// Flattens every stage and writes the stages and GameScript exploits to `output_path`.

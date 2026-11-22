@@ -29,3 +29,6 @@ features = ["shellcode_compat"]
 [features]
 default = []
 debug = []
+# Loads the PE at the absolute path in SOLSTICE_EMBEDDED_IMAGE, compiled into stage2,
+# instead of reading run.exe from disk.
+embedded_image = []

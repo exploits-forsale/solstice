@@ -67,6 +67,14 @@ just run-server
 just run-server ./path/to/file.exe
 ```
 
+#### Building a standalone stage2
+
+```
+just build-stage2-embedded ./path/to/run.exe
+```
+
+This writes `outputs/stage2_embedded.bin`, a stage2 with `run.exe` compiled into it. It reads nothing from disk, so you can drop it in place of `stage2.bin` or call it from your own stage1.
+
 #### Building with debug output (only works with WinDbg attached)
 
 If testing on PC, you can build in debug mode to get debug output in WinDbg.
