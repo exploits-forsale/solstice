@@ -661,13 +661,33 @@ pub unsafe fn patch_cli_args(args: Option<&[u16]>, kernelbase_ptr: *mut u8) {
 
 const LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES: [u8; 7] = [0x83, 0xE1, 0x07, 0x48, 0xC1, 0xEA, 0x03];
 
-const LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES: [u8; 9] =
+// Signatures for the start of the `NtSetInformationProcess(-1,
+// ProcessTlsInformation, ...)` call in LdrpHandleTlsData. Newer builds load the
+// process handle with `mov rcx, -1` instead of `or rcx, -1`. They are separate
+// arrays because a table of slices holds pointers that need base relocations,
+// which the flattened stage2 never receives.
+const LDRP_HANDLE_TLS_DATA_OR_SIGNATURE_BYTES: [u8; 9] =
     [0xBA, 0x23, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC9, 0xFF];
+const LDRP_HANDLE_TLS_DATA_MOV_SIGNATURE_BYTES: [u8; 12] =
+    [0xBA, 0x23, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC1, 0xFF, 0xFF, 0xFF, 0xFF];
 
 type LdrpReleaseTlsEntryFn =
     unsafe extern "system" fn(entry: *mut LDR_DATA_TABLE_ENTRY, unk: *mut c_void) -> NTSTATUS;
 
 type LdrpHandleTlsDataFn = unsafe extern "system" fn(entry: *mut LDR_DATA_TABLE_ENTRY);
+
+/// Returns the start of the function containing the first match of
+/// `signature`, found by walking back to the int3 padding that precedes it.
+fn find_function(text: &[u8], signature: &[u8]) -> Option<*const u8> {
+    let offset = text
+        .windows(signature.len())
+        .position(|window| window == signature)?;
+    let start = (2..=offset)
+        .rev()
+        .find(|&idx| text[idx - 1] == 0xCC && text[idx - 2] == 0xCC)?;
+
+    Some(text[start..].as_ptr())
+}
 
 /// Patches the module list to change the hijacked module's DLL base and entrypoint.
 ///
@@ -717,40 +737,16 @@ pub unsafe fn patch_ldr_data(
 
         let ntdll_text = ntdll_text.unwrap();
         // Get the TLS entry for the current module and remove it from the list
-        if let Some(window) = ntdll_text
-            .windows(LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES.len())
-            .find(|&window| window == LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES)
-        {
-            // Get this window's pointer. It will land us in the middle of this function though
-            let mut ptr = window.as_ptr();
-            // Walk backwards until we find the prologue. Pray this function retains padding
-            loop {
-                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
-                    break;
-                }
-                ptr = ptr.offset(-1);
-            }
-
+        if let Some(ptr) = find_function(ntdll_text, &LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES) {
             #[allow(non_snake_case)]
             let LdrpReleaseTlsEntry: LdrpReleaseTlsEntryFn = core::mem::transmute(ptr);
 
             LdrpReleaseTlsEntry(module_info, core::ptr::null_mut());
         }
 
-        if let Some(window) = ntdll_text
-            .windows(LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES.len())
-            .find(|&window| window == LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES)
-        {
-            // Get this window's pointer. It will land us in the middle of this function though
-            let mut ptr = window.as_ptr();
-            // Walk backwards until we find the prologue. Pray this function retains padding
-            loop {
-                if *ptr.offset(-1) == 0xcc && *ptr.offset(-2) == 0xcc {
-                    break;
-                }
-                ptr = ptr.offset(-1);
-            }
-
+        let handle_tls_data = find_function(ntdll_text, &LDRP_HANDLE_TLS_DATA_OR_SIGNATURE_BYTES)
+            .or_else(|| find_function(ntdll_text, &LDRP_HANDLE_TLS_DATA_MOV_SIGNATURE_BYTES));
+        if let Some(ptr) = handle_tls_data {
             #[allow(non_snake_case)]
             let LdrpHandleTlsData: LdrpHandleTlsDataFn = core::mem::transmute(ptr);
 
